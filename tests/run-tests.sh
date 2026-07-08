@@ -216,7 +216,18 @@ tier_integration() {
 echo "claude $* guard=${CAIRN_REVIEW_HOOK:-0}" >> "$HOME/.claude-calls"
 cat >/dev/null; echo "review: no changes"
 EOF
-  printf '#!/usr/bin/env bash\ncat >/dev/null 2>&1 || true; echo "crontab $*" >> "$HOME/.crontab-calls"\n' > "$SHIM/crontab"
+  cat > "$SHIM/crontab" <<'EOF'
+#!/usr/bin/env bash
+# stateful crontab shim: -l lists the stored table, -r clears it, else store stdin —
+# so sched_enable's `crontab -` persists and sched_status's `crontab -l` sees the mark
+# (a stateless no-op passed on macOS via the launchd file path but failed on Linux cron).
+printf 'crontab %s\n' "$*" >> "$HOME/.crontab-calls"
+case "$*" in
+  *-l*) cat "$HOME/.crontab-installed" 2>/dev/null || true ;;
+  *-r*) rm -f "$HOME/.crontab-installed" ;;
+  *)    cat > "$HOME/.crontab-installed" ;;
+esac
+EOF
   printf '#!/usr/bin/env bash\necho "Now drawing from '\''AC Power'\''"\n' > "$SHIM/pmset"
   printf '#!/usr/bin/env bash\necho "launchctl $*" >> "$HOME/.launchctl-calls"\n' > "$SHIM/launchctl"
   chmod +x "$SHIM"/*
