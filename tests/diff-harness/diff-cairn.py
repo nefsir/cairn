@@ -98,6 +98,12 @@ def snapshot(ctx):
                     snap["tree"][rel] = b"<unreadable>"
     if ctx.home.exists():
         for name in sorted(os.listdir(ctx.home)):
+            # .crontab-calls logs crontab INVOCATIONS, but bash's cron-path enable/disable
+            # pipe `( crontab -l | grep … ) | crontab -` runs its two stages concurrently,
+            # so the -l/- log order races — non-deterministic even bash-vs-bash on Linux.
+            # The resulting table (.crontab-installed) IS deterministic and stays compared.
+            if name == ".crontab-calls":
+                continue
             if name.startswith((".claude-", ".crontab", ".launchctl", ".pmset")):
                 p = ctx.home / name
                 if p.is_file():
