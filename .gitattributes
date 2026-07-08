@@ -1,0 +1,7 @@
+
+# Cross-platform: force LF on scripts + Python so a Windows clone with autocrlf
+# doesn't corrupt bin/cairn (bash chokes on \r) or diverge the port's byte output.
+*.sh        text eol=lf
+*.py        text eol=lf
+bin/cairn   text eol=lf
+*.md        text eol=lf

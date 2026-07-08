@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+printf 'args=%s\n' "$*" >> "$HOME/.pmset-calls"
+# deterministic: on AC power (so --battery-skip does NOT skip)
+echo "Now drawing from 'AC Power'"
+echo " -InternalBattery-0 (id=1)	100%; charged; 0:00 remaining present: true"

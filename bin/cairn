@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""cairn — Python port entry point (coexists with the bash bin/cairn during migration).
+
+Resolves CAIRN_HOME exactly like the bash script (the dir containing bin/) so assets,
+lib and the logo resolve identically, forces UTF-8 + LF on stdout/stderr for byte-
+identical, cross-platform output, then dispatches.
+"""
+import sys
+from pathlib import Path
+
+
+def _bootstrap() -> int:
+    sys.dont_write_bytecode = True   # don't pollute repo lib/ with __pycache__ via the seam
+    # Byte-identical output on every OS: UTF-8 encoding, LF newlines (no Windows CRLF).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", newline="\n")
+        except (AttributeError, ValueError):
+            pass
+    entry = Path(__file__).resolve()
+    cairn_home = entry.parent.parent           # bin/.. — repo root or ~/.claude/cairn
+    sys.path.insert(0, str(cairn_home / "port"))
+    from cairn.cli import main
+    return main(sys.argv, cairn_home)
+
+
+if __name__ == "__main__":
+    sys.exit(_bootstrap())

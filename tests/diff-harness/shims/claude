@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Deterministic `claude` shim for the diff-harness.
+# MUST drain stdin (cairn's run_claude pipes the redacted transcript/prompt in).
+# Logs the invocation + the EXACT stdin it received (the redaction/flatten oracle),
+# then prints a scripted, deterministic response — or fails to drive run_claude's
+# 3-way rc contract (rc1 transient / rc2 deterministic) via CAIRN_SHIM_CLAUDE_RC.
+in="$(cat)"
+seq_file="$HOME/.claude-seq"; n="$(cat "$seq_file" 2>/dev/null || echo 0)"; n=$((n+1)); printf '%s' "$n" > "$seq_file"
+printf 'guard=%s args=%s\n' "${CAIRN_REVIEW_HOOK:-0}" "$*" >> "$HOME/.claude-calls"
+printf '%s' "$in" >> "$HOME/.claude-stdin.$n"
+rc="${CAIRN_SHIM_CLAUDE_RC:-0}"
+case "$rc" in
+  1) echo "rate limit exceeded, try again" >&2; exit 1 ;;
+  2) echo "deterministic boom" >&2; exit 2 ;;
+esac
+# default success response: a scenario can override via CAIRN_SHIM_CLAUDE_OUT
+printf '%s\n' "${CAIRN_SHIM_CLAUDE_OUT:-3}"

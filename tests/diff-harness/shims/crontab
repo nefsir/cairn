@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# crontab shim: capture argv + any stdin (the cron line CONTENT run-tests never checks).
+printf 'args=%s\n' "$*" >> "$HOME/.crontab-calls"
+case "$*" in
+  *-l*) cat "$HOME/.crontab-installed" 2>/dev/null || true ;;
+  *-r*) rm -f "$HOME/.crontab-installed" ;;
+  *) in="$(cat)"; printf '%s' "$in" > "$HOME/.crontab-installed"; printf '%s' "$in" >> "$HOME/.crontab-stdin" ;;
+esac

@@ -1,0 +1,16 @@
+# OS / editor noise
+.DS_Store
+
+# Python bytecode from the lib/ helpers
+__pycache__/
+*.pyc
+
+# backups the installer/migrator leaves behind
+*.bak-*
+
+# packaged archive (built artifact, not source)
+cairn.zip
+
+# Local-only working material — never part of the published tool. One generic
+# entry so no individual private filename is ever exposed in this file.
+project/

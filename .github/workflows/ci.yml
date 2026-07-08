@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [main, python-port]
+  pull_request:
+
+jobs:
+  # macOS + Linux: full equivalence proof — bash suite, lib-parity, and the
+  # differential golden-master battery (bash oracle vs python candidate).
+  equivalence:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: bash test suite (128 tests)
+        run: bash tests/run-tests.sh
+      - name: lib-parity (in-process seam == subprocess)
+        run: python3 tests/diff-harness/lib_parity.py
+      - name: differential battery — bin/cairn.bash oracle == bin/cairn (python) candidate
+        run: python3 tests/diff-harness/diff-cairn.py
+      - name: harness self-check (bash == bash, determinism)
+        run: python3 tests/diff-harness/diff-cairn.py --oracle bin/cairn.bash --candidate bin/cairn.bash
+
+  # Windows: NET-NEW (no bash oracle). Prove the python port runs natively and its
+  # modules import + compile; the schtasks/power/where backends are exercised here.
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: compile the port package
+        run: python -m py_compile (Get-ChildItem -Recurse port/cairn/*.py | ForEach-Object FullName)
+        shell: pwsh
+      - name: version / help / banner run natively
+        run: |
+          python bin/cairn --version
+          python bin/cairn --help
+          python bin/cairn
+        shell: pwsh
+      - name: install + status + uninstall round-trip (native, no bash)
+        run: |
+          $env:CLAUDE_DIR = "$env:RUNNER_TEMP\dotclaude"
+          python bin/cairn install
+          python bin/cairn status
+          python bin/cairn lint
+          python bin/cairn uninstall
+        shell: pwsh
