@@ -22,6 +22,33 @@ from ..out import die, hdr, info, ok, warn
 from ..provision import assess_skills
 from ..skillsutil import archive_skill, is_protected
 
+
+def still_weak(quality, get):
+    """True when a low `quality` score is still supported by evidence.
+
+    `quality` is written ONCE (the assess pass skips anything already scored) and
+    nothing recomputes it, so a 1-2 assigned months ago survives a full rewrite.
+    Regular use or a fully passing eval set clears the flag — otherwise
+    --archive-weak would archive a heavily used skill on a frozen number.
+    """
+    if quality not in ("1", "2"):
+        return False
+    try:
+        if int(get("use_count") or 0) >= 3:
+            return False
+    except (TypeError, ValueError):
+        pass
+    rate = get("last_eval_rate") or ""
+    passed, sep, total = rate.partition("/")
+    if sep:
+        try:
+            if int(total) > 0 and int(passed) == int(total):
+                return False
+        except ValueError:
+            pass
+    return True
+
+
 MERGE_PROMPT = """You are merging several overlapping Claude Code skills into ONE class-level
 umbrella skill. Each source skill's SKILL.md is on stdin, separated by lines like
 "===== <name> =====". Produce ONE merged SKILL.md and NOTHING else:
@@ -53,8 +80,17 @@ does done can will would should task tasks help via run runs new also etc""".spl
             fm = m.group(1) if m else ""
             nm = re.search(r'^name:[ \t]*(.+)$', fm, re.M)
             name = nm.group(1).strip() if nm else ""
-            dm = re.search(r'^description:[ \t]*(.+)$', fm, re.M)
+            dm = re.search(r'^description:[ \t]*(.*)$', fm, re.M)
             desc = dm.group(1).strip() if dm else ""
+            if desc in ('>', '>-', '>+', '|', '|-', '|+'):
+                # YAML block scalar: the text lives in the indented lines below.
+                tail = fm[dm.end():].split('\n')[1:]
+                body = []
+                for ln in tail:
+                    if ln.strip() and not ln[:1].isspace():
+                        break
+                    body.append(ln.strip())
+                desc = ' '.join(x for x in body if x)
         except Exception:
             pass
         return name, desc
@@ -131,7 +167,8 @@ does done can will would should task tasks help via run runs new also etc""".spl
     clusters.sort(key=best, reverse=True)
     folds = sorted([s for s in skills if s['learn'] >= FOLD], key=lambda s: s['learn'], reverse=True)
     lowuse = sorted([s for s in skills if s['uc'] >= USE_MIN and s['uavg'] is not None and s['uavg'] <= USE_AVG], key=lambda s: s['uavg'])
-    lowq = sorted([s for s in skills if s['q'] in ('1', '2')], key=lambda s: s['q'])
+    lowq = sorted([s for s in skills if still_weak(s['q'], lambda k, d=s['dir']: meta_get(d, k))],
+                  key=lambda s: s['q'])
     L = []
     if clusters:
         L.append("## Merge into umbrellas (%d cluster(s))" % len(clusters))
@@ -213,7 +250,7 @@ def _weak_detect(SKILLS, UAVG, UMIN) -> str:
         q = mg(d, 'quality')
         a, n = uavg(d)
         reason = None
-        if q in ('1', '2'):
+        if still_weak(q, lambda k, _d=d: mg(_d, k)):
             reason = 'quality ' + q
         elif a is not None and n >= UMIN and a <= UAVG:
             reason = 'usefulness %.1f/5 over %d' % (a, n)

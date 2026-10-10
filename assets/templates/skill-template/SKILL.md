@@ -32,5 +32,9 @@ append ONE dated line to `learnings.md`:
 
 `YYYY-MM-DD — what happened → what to do differently next time`
 
+A clean run is NOT a learning. If the run went as documented, append nothing —
+`usage.md` already records that it ran. Never log "shipped clean" or a per-run
+changelog; it buries the real traps.
+
 When `learnings.md` exceeds ~15 entries, propose folding the stable ones into the
 Procedure above and pruning the log (`/skill-fold`).

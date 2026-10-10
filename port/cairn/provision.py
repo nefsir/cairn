@@ -227,14 +227,43 @@ def seed_feedback(cfg: Config, dry: bool) -> None:
             us.write_text(f"# Usage ratings — {name}\n<!-- YYYY-MM-DD | N/5 | task context | helped or hindered -->\n", encoding="utf-8")
 
 
+def _evals_all_pass(rate: str) -> bool:
+    """True when a recorded eval rate is a full pass, e.g. '7/7'."""
+    passed, sep, total = rate.partition("/")
+    if not sep:
+        return False
+    try:
+        return int(total) > 0 and int(passed) == int(total)
+    except ValueError:
+        return False
+
+
 def low_quality_list(ctx: Context) -> str:
+    """Skills whose stale `quality` score is still backed by evidence.
+
+    `quality` is written ONCE — the assess pass skips anything already scored and
+    nothing recomputes it — so a 1-2 assigned months ago outlives a full rewrite.
+    Evidence beats the frozen number: a skill in regular use, or one whose own eval
+    set passes completely, is not weak whatever the old assessment said. Without
+    this guard `curate --archive-weak` would archive the second most-used skill here
+    (36 uses, evals 7/7, still flagged 2/5 from before it was rewritten).
+    """
     out = []
     for d in sorted(ctx.cfg.skills.glob("*")):
         if not (d / ".meta").is_file():
             continue
-        q = ctx.lib.run("meta", "get", str(d / ".meta"), "quality").out
-        if q in ("1", "2"):
-            out.append(f"{d.name} (quality {q})\n")
+        meta = d / ".meta"
+        q = ctx.lib.run("meta", "get", str(meta), "quality").out
+        if q not in ("1", "2"):
+            continue
+        try:
+            if int(ctx.lib.run("meta", "get", str(meta), "use_count").out or 0) >= 3:
+                continue
+        except ValueError:
+            pass
+        if _evals_all_pass(ctx.lib.run("meta", "get", str(meta), "last_eval_rate").out):
+            continue
+        out.append(f"{d.name} (quality {q})\n")
     return "".join(out)
 
 

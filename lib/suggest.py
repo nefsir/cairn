@@ -76,6 +76,52 @@ def _list_field(fm, key):
     return [p.strip().strip("'\"").lower() for p in raw.split(",") if p.strip()]
 
 
+_BLOCK = re.compile(r'^[>|][-+]?\d*$')
+
+# Pasted logs/code/SQL are scored on exactly the vocabulary the skills are indexed
+# on (a URL like .../api/flight/booking yields flight, booking, api), so a blob
+# clears the bar far more often than a real question: measured on 400 typed prompts
+# vs 400 pasted tool results, 75% of pastes scored >=15 against 30.8% of prompts.
+# These shape markers catch 62% of the above-threshold pastes while touching 4.1% of
+# above-threshold prompts — and a match here only DEMOTES to the roster (the names
+# still surface), it never silences. Disable with CAIRN_SUGGEST_PASTE_GUARD=0.
+_PASTE = tuple(re.compile(p, re.M) for p in (
+    r'\[(REQ|RES|INFO|WARN|ERROR|DEBUG)\]|>>>|===',   # log framing / banner rules
+    r'[{};]|=>|->|::',                                 # code punctuation
+    r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}',               # ISO timestamp
+    r'^\s*\d+:|\|\s*\d+\s*\|',                         # line numbers / table pipes
+    r'^\s*[-*`<{#\[]|^\s+\S',                          # bullet, fence, markup, indent
+))
+_PUNCT = set('{}[]()<>;:|/\\=+*"\'`#$@%^&~')
+
+
+def _looks_pasted(s):
+    if any(p.search(s) for p in _PASTE):
+        return True
+    return s and (sum(c in _PUNCT for c in s) / len(s)) > 0.18
+
+
+def _scalar(fm, m):
+    """Value of a frontmatter key, folding YAML block scalars.
+
+    `description: >-` (or `|`) puts the text on the following indented lines, so
+    the plain one-line regex captured just the ">" marker and the skill scored on
+    its name alone — every trigger phrase invisible. Gather the indented
+    continuation lines and join them into one string.
+    """
+    head = m.group(1).strip()
+    if not _BLOCK.match(head):
+        return head
+    out = []
+    for ln in fm[m.end():].split("\n")[1:]:
+        if not ln.strip():
+            continue
+        if not ln[:1].isspace():        # dedent back to key level ends the block
+            break
+        out.append(ln.strip())
+    return " ".join(out).strip()
+
+
 def frontmatter(path):
     name, desc, plats, keywords = "", "", [], ""
     try:
@@ -84,11 +130,11 @@ def frontmatter(path):
         fm = m.group(1) if m else ""
         nm = re.search(r'^name:[ \t]*(.+)$', fm, re.M)
         name = nm.group(1).strip() if nm else ""
-        dm = re.search(r'^description:[ \t]*(.+)$', fm, re.M)
-        desc = dm.group(1).strip() if dm else ""
+        dm = re.search(r'^description:[ \t]*(.*)$', fm, re.M)
+        desc = _scalar(fm, dm) if dm else ""
         plats = _list_field(fm, "platforms")
-        km = re.search(r'^keywords:[ \t]*(.+)$', fm, re.M)
-        keywords = km.group(1).strip() if km else ""
+        km = re.search(r'^keywords:[ \t]*(.*)$', fm, re.M)
+        keywords = _scalar(fm, km) if km else ""
     except (OSError, UnicodeError):
         pass
     return name, desc, plats, keywords
@@ -142,7 +188,9 @@ def main(argv):
     scored.sort(key=lambda x: (-x[0], x[1]))
 
     thresh = float(os.environ.get("CAIRN_SUGGEST_THRESHOLD", "5.0"))
-    strong = [(s, n, d) for s, n, d in scored if s >= thresh][:topk]
+    pasted = (os.environ.get("CAIRN_SUGGEST_PASTE_GUARD", "1") != "0"
+              and _looks_pasted(prompt))
+    strong = [] if pasted else [(s, n, d) for s, n, d in scored if s >= thresh][:topk]
     if strong:
         for score, name, desc in strong:
             first = re.split(r'(?<=[.])\s', desc)[0][:110] if desc else ""

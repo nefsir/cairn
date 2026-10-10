@@ -100,8 +100,9 @@ def main(argv):
             if meta.get("pinned", "false") == "true":
                 continue
             current = meta.get("state", "active")
-            last = (meta.get("last_used") or meta.get("last_patched")
-                    or meta.get("created") or "")
+            last = max([d for d in (meta.get("last_used"),
+                                    meta.get("last_patched"),
+                                    meta.get("created")) if d] or [""])
             proposed, idle = state_for(today, last, stale, arch)
             if proposed != current:
                 sys.stdout.write("%s\t%s\t%s\t%s\n"

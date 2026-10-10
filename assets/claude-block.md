@@ -66,7 +66,9 @@ Your current memory, auto-loaded each session (edit with `cairn memory`, never b
 ### Per-skill feedback (do these as you work)
 - `learnings.md`: read it before running a skill; after a correction or a failed
   step, append one dated line — `YYYY-MM-DD — what happened → what to do
-  differently`.
+  differently`. **A clean run is not a learning** — if it went as documented,
+  append nothing; `usage.md` already records that it ran. Never log "shipped
+  clean" or a per-run changelog: it buries the real traps.
 - `usage.md`: after a task in which you actually used a skill, append one line —
   `YYYY-MM-DD | N/5 | one-line task context | what it helped or hindered`. Score
   honestly (5 = directly sped up/corrected; 1 = activated but useless/misleading);

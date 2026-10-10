@@ -62,6 +62,14 @@ MEMORY — only durable facts, respecting char caps (a rejection means trim/repl
 FEEDBACK — for each skill actually used this session, append one honest line to
 its usage.md (YYYY-MM-DD | N/5 | context | helped/hindered); append dated
 learnings.md lines for any corrections.
+  A CLEAN RUN IS NOT A LEARNING. Write to learnings.md ONLY when the user
+  corrected you, a step failed, or you found a genuinely better way. If the run
+  went as the skill documents, append NOTHING there — usage.md already records
+  that it ran. Never log "shipped clean" / "przebieg czysty" / a per-release
+  changelog: that is the one-off task narrative excluded above, and it buries the
+  real traps until someone has to fold the log by hand.
+  Score usage.md honestly. If every entry is 4/5 or 5/5 the score carries no
+  signal at all; a skill that fired but did not actually help is a 1 or a 2.
 
 End by printing a 1-3 line summary of exactly what you changed (or "no changes")."""
 

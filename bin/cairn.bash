@@ -605,12 +605,25 @@ assess_skills() {
   ok "assessed $n skill(s)"
 }
 low_quality_list() {
-  local d name q
+  # `quality` is written ONCE (the assess pass skips any skill that already has a
+  # score) and nothing recomputes it, so a stale 1-2 can outlive a full rewrite.
+  # Evidence beats the frozen number: a skill whose own evals pass, or that is in
+  # regular use, is not "weak" no matter what the old assessment said — without
+  # this guard `--archive-weak` would archive the second most-used skill here.
+  local d name q uc rate pass total
   for d in "$SKILLS"/*/; do
     [ -f "$d/.meta" ] || continue
     name="$(basename "$d")"
     q="$(py meta get "$d/.meta" quality)"
-    case "$q" in 1|2) printf '%s (quality %s)\n' "$name" "$q";; esac
+    case "$q" in 1|2) ;; *) continue ;; esac
+    uc="$(py meta get "$d/.meta" use_count)"; uc="${uc:-0}"
+    [ "$uc" -ge 3 ] 2>/dev/null && continue           # in regular use
+    rate="$(py meta get "$d/.meta" last_eval_rate)"   # e.g. 7/7
+    if [ -n "$rate" ]; then
+      pass="${rate%%/*}"; total="${rate##*/}"
+      [ -n "$total" ] && [ "$total" != "0" ] && [ "$pass" = "$total" ] && continue
+    fi
+    printf '%s (quality %s)\n' "$name" "$q"
   done
 }
 
@@ -810,6 +823,14 @@ MEMORY — only durable facts, respecting char caps (a rejection means trim/repl
 FEEDBACK — for each skill actually used this session, append one honest line to
 its usage.md (YYYY-MM-DD | N/5 | context | helped/hindered); append dated
 learnings.md lines for any corrections.
+  A CLEAN RUN IS NOT A LEARNING. Write to learnings.md ONLY when the user
+  corrected you, a step failed, or you found a genuinely better way. If the run
+  went as the skill documents, append NOTHING there — usage.md already records
+  that it ran. Never log "shipped clean" / "przebieg czysty" / a per-release
+  changelog: that is the one-off task narrative excluded above, and it buries the
+  real traps until someone has to fold the log by hand.
+  Score usage.md honestly. If every entry is 4/5 or 5/5 the score carries no
+  signal at all; a skill that fired but did not actually help is a 1 or a 2.
 
 End by printing a 1-3 line summary of exactly what you changed (or "no changes").'
 
@@ -969,7 +990,13 @@ def frontmatter(p):
     try:
         t=open(p,errors='replace').read(); m=re.search(r'^---\s*\n(.*?)\n---',t,re.S); fm=m.group(1) if m else ""
         nm=re.search(r'^name:[ \t]*(.+)$',fm,re.M); name=nm.group(1).strip() if nm else ""
-        dm=re.search(r'^description:[ \t]*(.+)$',fm,re.M); desc=dm.group(1).strip() if dm else ""
+        dm=re.search(r'^description:[ \t]*(.*)$',fm,re.M); desc=dm.group(1).strip() if dm else ""
+        if desc in ('>','>-','>+','|','|-','|+'):
+            body=[]
+            for ln in fm[dm.end():].split('\n')[1:]:
+                if ln.strip() and not ln[:1].isspace(): break
+                body.append(ln.strip())
+            desc=' '.join(x for x in body if x)
     except Exception: pass
     return name,desc
 def learn_count(d):
@@ -1019,7 +1046,22 @@ def best(g): return max([jac(skills[a]['toks'],skills[b]['toks']) for a,b in ite
 clusters.sort(key=best,reverse=True)
 folds=sorted([s for s in skills if s['learn']>=FOLD],key=lambda s:s['learn'],reverse=True)
 lowuse=sorted([s for s in skills if s['uc']>=USE_MIN and s['uavg'] is not None and s['uavg']<=USE_AVG],key=lambda s:s['uavg'])
-lowq=sorted([s for s in skills if s['q'] in ('1','2')],key=lambda s:s['q'])
+def _evals_all_pass(dirn):
+    r=meta_get(dirn,'last_eval_rate') or ''
+    if '/' not in r: return False
+    p,_,t=r.partition('/')
+    try: return int(t)>0 and int(p)==int(t)
+    except ValueError: return False
+def _still_weak(s):
+    # `quality` is written once (the assess pass skips anything already scored) and
+    # nothing recomputes it, so a stale 1-2 survives a full rewrite. Evidence beats
+    # the frozen number: regular use or a fully passing eval set clears the flag.
+    if s['q'] not in ('1','2'): return False
+    try:
+        if int(meta_get(s['dir'],'use_count') or 0) >= 3: return False
+    except ValueError: pass
+    return not _evals_all_pass(s['dir'])
+lowq=sorted([s for s in skills if _still_weak(s)],key=lambda s:s['q'])
 L=[]
 if clusters:
     L.append("## Merge into umbrellas (%d cluster(s))"%len(clusters)); L.append("")
