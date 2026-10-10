@@ -412,7 +412,7 @@ EOF
   CAIRN_REVIEW_HOOK=1 "$C" review "$TR" >/dev/null 2>&1
   expect_eq "$?" "0" "review no-ops when CAIRN_REVIEW_HOOK already set (recursion guard)"
 
-  # review telemetry: a skill the review touches gets use_count bumped + last_used set
+  # review telemetry: review marks last_patched but never bumps use_count/last_used
   mkdir -p "$CD/skills/tele"; printf -- '---\nname: tele\ndescription: d\n---\nb\n' > "$CD/skills/tele/SKILL.md"
   python3 "$LIB/meta.py" init "$CD/skills/tele/.meta" created=2026-01-01 last_used=2026-01-01
   cat > "$SHIM/claude" <<EOF
@@ -421,8 +421,89 @@ cat >/dev/null; printf 'note\n' >> "$CD/skills/tele/learnings.md"; echo done
 EOF
   chmod +x "$SHIM/claude"
   "$C" review "$TR" >/dev/null 2>&1
-  expect_eq "$(python3 "$LIB/meta.py" get "$CD/skills/tele/.meta" use_count)" "1" "review bumps use_count for a touched skill"
-  expect_eq "$(python3 "$LIB/meta.py" get "$CD/skills/tele/.meta" last_used)" "$(date +%Y-%m-%d)" "review sets last_used on a touched skill"
+  expect_eq "$(python3 "$LIB/meta.py" get "$CD/skills/tele/.meta" use_count)" "0" "review does NOT bump use_count (track hook owns it)"
+  expect_eq "$(python3 "$LIB/meta.py" get "$CD/skills/tele/.meta" last_used)" "2026-01-01" "review does NOT touch last_used"
+  expect_eq "$(python3 "$LIB/meta.py" get "$CD/skills/tele/.meta" last_patched)" "$(date +%Y-%m-%d)" "review sets last_patched on a changed skill"
+  ( cd "$CD/skills" && git log -1 --name-only --format= ) | grep -q "tele/learnings.md" && ok "review commits the file it changed" || bad "review commits the file it changed"
+  ( cd "$CD/skills" && git status --porcelain ) | grep -q "tele/SKILL.md" && ok "review leaves a pre-existing untouched file uncommitted" || bad "review leaves untouched file uncommitted"
+
+  # --- review pipeline: enqueue -> worker -> terminal state ---
+  local Q="$CD/cairn/queue" RT="$CD/projects/p"
+  mkrt() { : > "$1"; local i=1; while [ "$i" -le "$3" ]; do
+      printf '{"type":"user","entrypoint":"%s","message":{"content":"step %s"}}\n' "$2" "$i" >> "$1"
+      printf '{"type":"assistant","entrypoint":"%s","message":{"content":[{"type":"text","text":"ok"}]}}\n' "$2" >> "$1"
+      i=$((i+1)); done; }
+  hookjson() { printf '{"session_id":"%s","transcript_path":"%s","cwd":"%s","reason":"other"}' "$1" "$2" "$HOME"; }
+  cat > "$SHIM/claude" <<EOF
+#!/usr/bin/env bash
+cat >/dev/null; echo "claude guard=\${CAIRN_REVIEW_HOOK:-0}" >> "$HOME/.claude-calls"; printf 'n\n' >> "$CD/skills/tele/learnings.md"; echo done
+EOF
+  chmod +x "$SHIM/claude"
+  mkrt "$RT/i1.jsonl" cli 3; mkrt "$RT/s1.jsonl" sdk-cli 5; mkrt "$RT/k1.jsonl" cli 1
+  local t0 t1; t0=$(python3 -c 'import time;print(time.time())')
+  hookjson i1 "$RT/i1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue; check $? "enqueue exits 0"
+  t1=$(python3 -c 'import time;print(time.time())')
+  python3 -c "import sys;sys.exit(0 if $t1-$t0<1.0 else 1)"; check $? "enqueue returns in under 1s"
+  expect_file "$Q/pending/i1.json" "enqueue writes pending/<session_id>.json"
+  hookjson i1 "$RT/i1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  expect_eq "$(ls "$Q/pending" | wc -l | tr -d ' ')" "1" "duplicate enqueue is a no-op"
+  printf '{"session_id":"../x","transcript_path":"%s"}' "$RT/i1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  expect_nofile "$CD/cairn/x.json" "unsafe session_id never escapes the queue"
+  printf '{"session_id":"nope"}' | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue; check $? "enqueue without transcript_path exits 0"
+  expect_grep "$CD/cairn/logs/review.log" '"session_id":"nope"' "missing transcript_path logs the raw payload"
+  hookjson s1 "$RT/s1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  hookjson k1 "$RT/k1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  : > "$HOME/.claude-calls"
+  CAIRN_NOW=1700000000 "$C" review --worker --drain; check $? "drain exits 0"
+  expect_file "$Q/done/i1.json" "interactive session ends in done/"
+  expect_file "$Q/skipped/s1.json" "sdk session ends in skipped/"
+  expect_file "$Q/skipped/k1.json" "short session ends in skipped/"
+  expect_grep "$Q/skipped/s1.json" "skip:sdk" "skip reason recorded"
+  expect_eq "$(grep -c . "$HOME/.claude-calls")" "1" "claude ran once (skips are free)"
+  expect_grep "$HOME/.claude-calls" "guard=1" "worker runs claude with the recursion guard"
+  # gap: after-session within 10 min defers, after 10 min runs
+  mkrt "$RT/i2.jsonl" cli 4; hookjson i2 "$RT/i2.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  CAIRN_NOW=1700000060 "$C" review --worker --after-session
+  expect_file "$Q/pending/i2.json" "after-session defers inside the gap"
+  CAIRN_NOW=1700000700 "$C" review --worker --after-session
+  expect_file "$Q/done/i2.json" "after-session runs once the gap has passed"
+  # resume: +3 user msgs requeues with from_user_msg
+  mkrt "$RT/i1.jsonl" cli 6; hookjson i1 "$RT/i1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  expect_grep "$Q/pending/i1.json" '"from_user_msg": 3' "resumed session requeued from the reviewed message"
+  CAIRN_NOW=1700001400 "$C" review --worker --after-session
+  expect_file "$Q/done/i1.json" "resumed session reviewed again"
+  # timeout: a hanging claude (with a child) is killed, edits reverted, retried once by drain
+  cat > "$SHIM/claude" <<EOF
+#!/usr/bin/env bash
+cat >/dev/null; printf 'half\n' >> "$CD/skills/tele/learnings.md"; sleep 30 & echo $! > "$CD/sleep.pid"; wait
+EOF
+  chmod +x "$SHIM/claude"
+  local before_l; before_l="$(cat "$CD/skills/tele/learnings.md")"
+  mkrt "$RT/h1.jsonl" cli 3; hookjson h1 "$RT/h1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  CAIRN_REVIEW_TIMEOUT_SEC=2 CAIRN_NOW=1700002200 "$C" review --worker --after-session
+  expect_file "$Q/failed/h1.json" "timeout ends in failed/"
+  expect_eq "$(cat "$CD/skills/tele/learnings.md")" "$before_l" "timeout reverts the run's skill edits"
+  kill -0 "$(cat "$CD/sleep.pid")" 2>/dev/null && bad "timeout kills the whole process group" || ok "timeout kills the whole process group"
+  CAIRN_REVIEW_TIMEOUT_SEC=2 CAIRN_NOW=1700002900 "$C" review --worker --drain
+  expect_grep "$Q/failed/h1.json" '"attempts": 2' "drain retries a failed entry exactly once"
+  # mutex: a held lock makes the worker exit at once
+  mkdir -p "$CD/cairn/.review.lock"; mkrt "$RT/m1.jsonl" cli 3; hookjson m1 "$RT/m1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  CAIRN_NOW=1700003600 "$C" review --worker --drain
+  expect_file "$Q/pending/m1.json" "a held lock stops a second worker"
+  rmdir "$CD/cairn/.review.lock"
+  # real spawn: enqueue without NO_SPAWN processes the entry in the background
+  cat > "$SHIM/claude" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null; echo done
+EOF
+  chmod +x "$SHIM/claude"
+  rm -f "$Q/.last-review"
+  hookjson m1 "$RT/m1.jsonl" | "$C" review --enqueue
+  local w=0; while [ ! -f "$Q/done/m1.json" ] && [ "$w" -lt 20 ]; do sleep 0.5; w=$((w+1)); done
+  expect_file "$Q/done/m1.json" "detached worker processes the entry after the hook returns"
+  # kill switch
+  mkrt "$RT/d1.jsonl" cli 3; hookjson d1 "$RT/d1.jsonl" | CAIRN_DISABLE=1 "$C" review --enqueue
+  expect_nofile "$Q/pending/d1.json" "CAIRN_DISABLE=1 makes the hook a no-op"
 
   # --- curate: read-only then --apply-lifecycle with protections ---
   local S="$CD/skills"
