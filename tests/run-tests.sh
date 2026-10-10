@@ -411,6 +411,31 @@ EOF
   expect_grep "$HOME/.claude-calls" "guard=1" "review runs claude with recursion guard set"
   CAIRN_REVIEW_HOOK=1 "$C" review "$TR" >/dev/null 2>&1
   expect_eq "$?" "0" "review no-ops when CAIRN_REVIEW_HOOK already set (recursion guard)"
+  # end-to-end redaction: secrets seeded in a transcript must never reach claude's stdin
+  local RS="$WORK/shim-cap"; mkdir -p "$RS"
+  printf '#!/usr/bin/env bash\ncat > "%s/claude-stdin.txt"; echo "review: no changes"\n' "$WORK" > "$RS/claude"; chmod +x "$RS/claude"
+  local S_SK="s""k-1234567890abcdefghijABCDEF" S_AWS="AK""IA0123456789ABCDEF" S_GH="gh""p_0123456789abcdefghijABCDEFGHIJ012345" S_BR="Bear""er abcDEF0123456789xyz" S_PEM="-----BEGIN RSA PRIV""ATE KEY-----"
+  local TRS="$CD/projects/p/secrets.jsonl"
+  python3 - "$TRS" "$HOME/wd" "$S_SK" "$S_AWS" "$S_GH" "$S_BR" "$S_PEM" <<'PYEOF'
+import json, sys
+out, cwd, sk, aws, gh, br, pem = sys.argv[1:8]
+end = pem.replace("BEGIN", "END")
+rows = [
+  {"type": "user", "cwd": cwd, "message": {"role": "user", "content": "creds: key %s and aws %s" % (sk, aws)}},
+  {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "token %s header Authorization: %s" % (gh, br)}]}},
+  {"type": "user", "message": {"role": "user", "content": "%s\nMIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n%s" % (pem, end)}},
+]
+open(out, "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+PYEOF
+  rm -f "$WORK/claude-stdin.txt"
+  PATH="$RS:$PATH" "$C" review "$TRS" >/dev/null 2>&1
+  expect_file "$WORK/claude-stdin.txt" "review fed the flattened transcript to claude"
+  local sec leaked=""
+  for sec in "$S_SK" "$S_AWS" "$S_GH" "abcDEF0123456789xyz" "MIIBOgIBAAJBAKj34"; do
+    grep -qF -- "$sec" "$WORK/claude-stdin.txt" && leaked="$leaked [$sec]"
+  done
+  expect_eq "$leaked" "" "no secret reaches claude's stdin through the review path"
+  expect_grep "$WORK/claude-stdin.txt" "redacted" "redaction markers present in review stdin"
 
   # review telemetry: review marks last_patched but never bumps use_count/last_used
   mkdir -p "$CD/skills/tele"; printf -- '---\nname: tele\ndescription: d\n---\nb\n' > "$CD/skills/tele/SKILL.md"

@@ -136,6 +136,9 @@ def _norm(b, ctx):
     """Normalize a captured stdout/stderr/file body before diffing."""
     s = b.decode("utf-8", "replace") if isinstance(b, (bytes, bytearray)) else b
     s = "\n".join(l for l in s.split("\n") if not re.match(r"\s*(Installed from:|Review queue:)", l))
+    # review pipeline v2: the SessionEnd hook now calls `review --enqueue` (oracle: `--hook`).
+    # Map ONLY that exact settings.json command fragment so nothing else is masked.
+    s = s.replace('" review --enqueue >> ', '" review --hook >> ')
     s = s.replace(str(ctx.claude_dir), "<CLAUDE_DIR>")   # longest first (contains home)
     s = s.replace(str(ctx.home), "<HOME>")
     s = re.sub(r'/var/folders/\S+', "<TMP>", s)

@@ -1,5 +1,3 @@
-DIVERGED = "review pipeline v2 (queue + detached worker); covered by tests/run-tests.sh"
-
 import json
 
 NAME = "suggest-track-surface"
