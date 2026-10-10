@@ -151,6 +151,37 @@ tier_unit() {
 MIIEabcdef
 -----END RSA PRIVATE KEY-----")" in *MIIEabcdef*) bad "redact PEM private key";; *) ok "redact PEM private key";; esac
 
+  # --- transcript.py classify / flatten head+tail / from-user ---
+  local TC="$T/tc"; mkdir -p "$TC"
+  mk_tr() { # $1=file $2=entrypoint $3=n user text msgs
+    : > "$1"; local i=1
+    while [ "$i" -le "$3" ]; do
+      printf '{"type":"user","entrypoint":"%s","message":{"content":"msg %s"}}\n' "$2" "$i" >> "$1"
+      printf '{"type":"user","entrypoint":"%s","message":{"content":[{"type":"tool_result","content":"x"}]}}\n' "$2" >> "$1"
+      printf '{"type":"assistant","entrypoint":"%s","message":{"content":[{"type":"text","text":"ok %s"}]}}\n' "$2" "$i" >> "$1"
+      i=$((i+1)); done; }
+  mk_tr "$TC/cli3.jsonl" cli 3; mk_tr "$TC/cli2.jsonl" cli 2; mk_tr "$TC/sdk.jsonl" sdk-cli 9; mk_tr "$TC/ide.jsonl" claude-vscode 3
+  expect_eq "$(python3 "$LIB/transcript.py" classify "$TC/cli3.jsonl" 3)" "$(printf 'review\t3')" "classify: cli + 3 user msgs -> review (tool_result not counted)"
+  expect_eq "$(python3 "$LIB/transcript.py" classify "$TC/cli2.jsonl" 3 | cut -f1)" "skip:short" "classify: 2 user msgs -> skip:short"
+  expect_eq "$(python3 "$LIB/transcript.py" classify "$TC/sdk.jsonl" 3 | cut -f1)" "skip:sdk" "classify: sdk-cli -> skip:sdk"
+  expect_eq "$(python3 "$LIB/transcript.py" classify "$TC/ide.jsonl" 3 | cut -f1)" "review" "classify: IDE entrypoint is interactive -> review"
+  expect_eq "$(python3 "$LIB/transcript.py" classify "$TC/nope.jsonl" 3 | cut -f1)" "skip:missing" "classify: missing file"
+  printf 'not json\n' > "$TC/bad.jsonl"
+  expect_eq "$(python3 "$LIB/transcript.py" classify "$TC/bad.jsonl" 3 | cut -f1)" "skip:unreadable" "classify: no JSON lines"
+  # head+tail: a long transcript keeps BOTH the first and the last message
+  : > "$TC/long.jsonl"
+  printf '{"type":"user","message":{"content":"FIRST-MARK"}}\n' >> "$TC/long.jsonl"
+  python3 -c 'import json;print("\n".join(json.dumps({"type":"assistant","message":{"content":[{"type":"text","text":"filler "*50}]}}) for _ in range(400)))' >> "$TC/long.jsonl"
+  printf '{"type":"user","message":{"content":"LAST-MARK"}}\n' >> "$TC/long.jsonl"
+  local fl; fl="$(python3 "$LIB/transcript.py" flatten-file "$TC/long.jsonl" 6000)"
+  case "$fl" in *FIRST-MARK*LAST-MARK*) ok "flatten keeps head and tail";; *) bad "flatten keeps head and tail";; esac
+  case "$fl" in *"chars omitted"*) ok "flatten marks the omitted middle";; *) bad "flatten marks the omitted middle";; esac
+  # from-user: only messages from user msg index 2 onward (+ context header with the first one)
+  local fu; fu="$(python3 "$LIB/transcript.py" flatten-file "$TC/cli3.jsonl" 60000 2)"
+  case "$fu" in *"USER: msg 3"*) ok "flatten from_user includes later msgs";; *) bad "flatten from_user includes later msgs";; esac
+  case "$fu" in *"USER: msg 2"*) bad "flatten from_user drops reviewed msgs";; *) ok "flatten from_user drops reviewed msgs";; esac
+  case "$fu" in *"First user message: msg 1"*) ok "flatten from_user adds context header";; *) bad "flatten from_user adds context header";; esac
+
   # lifecycle: a future last_used must read as active, not archived (no abs())
   expect_eq "$(python3 "$LIB/lifecycle.py" state 2026-06-15 2026-12-01 30 90)" "active" "lifecycle clamps future activity to active"
   # memory: a multi-line entry whose continuation starts with the marker stays ONE entry

@@ -16,8 +16,15 @@
 #       newest first. allflag=1 ignores root; since_days=0 means no age filter.
 #   transcript.py flatten <projects_dir> <path> <maxchars>
 #       Print the flattened, redacted text of one session (USER:/ASSISTANT:).
-#   transcript.py flatten-file <path> <maxchars>
+#   transcript.py flatten-file <path> <maxchars> [from_user]
 #       Same, but takes an absolute transcript path directly (review loop).
+#       Over maxchars keeps head (1/3) + tail (2/3). from_user=N skips the
+#       first N user messages (resumed session) and adds a context header.
+#   transcript.py classify <path> <min_user>
+#       Print  verdict<TAB>user_msgs ; verdict is review | skip:sdk |
+#       skip:short | skip:missing | skip:unreadable.
+#   transcript.py count-user <path>
+#       Print the number of human-typed user messages.
 # =============================================================================
 import sys
 import os
@@ -136,33 +143,102 @@ def content_text(content):
     return "\n".join(x for x in out if x)
 
 
-def flatten(path, maxchars):
-    parts = []
+def is_user_text(o):
+    """A message the human typed: type=user, not meta, text content, no tool_result."""
+    if o.get("type") != "user" or o.get("isMeta"):
+        return False
+    c = (o.get("message") or {}).get("content")
+    if isinstance(c, str):
+        return bool(c.strip())
+    if isinstance(c, list):
+        kinds = {b.get("type") for b in c if isinstance(b, dict)}
+        return "text" in kinds and "tool_result" not in kinds
+    return False
+
+
+def _records(path):
+    with open(path, "r", errors="replace") as f:
+        for line in f:
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(o, dict):
+                yield o
+
+
+def count_user(path):
     try:
-        with open(path, "r", errors="replace") as f:
-            for line in f:
-                try:
-                    o = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(o, dict):
-                    continue
-                role = o.get("type")
-                msg = o.get("message") or {}
-                if role == "user":
-                    txt = content_text(msg.get("content", ""))
-                    if txt:
-                        parts.append("USER: " + txt)
-                elif role == "assistant":
-                    txt = content_text(msg.get("content", ""))
-                    if txt:
-                        parts.append("ASSISTANT: " + txt)
+        return sum(1 for o in _records(path) if is_user_text(o))
+    except OSError:
+        return 0
+
+
+def classify(path, min_user):
+    """Deterministic review gate -> (verdict, user_msgs). Only sdk-* entrypoints are
+    headless; cli / IDE / desktop / missing entrypoint count as interactive."""
+    if not os.path.isfile(path):
+        return "skip:missing", 0
+    n = parsed = 0
+    eps = set()
+    try:
+        for o in _records(path):
+            parsed += 1
+            ep = o.get("entrypoint")
+            if ep:
+                eps.add(str(ep))
+            if is_user_text(o):
+                n += 1
+    except OSError:
+        return "skip:unreadable", 0
+    if parsed == 0:
+        return "skip:unreadable", 0
+    if eps and all(e.startswith("sdk") for e in eps):
+        return "skip:sdk", n
+    if n < min_user:
+        return "skip:short", n
+    return "review", n
+
+
+def _clip(text, maxchars):
+    """Keep the head (1/3) and the tail (2/3): corrections live at the end."""
+    if len(text) <= maxchars:
+        return text
+    head = maxchars // 3
+    tail = maxchars - head
+    omitted = len(text) - head - tail
+    return text[:head] + "\n\n[... %d chars omitted ...]\n\n" % omitted + text[-tail:]
+
+
+def flatten(path, maxchars, from_user=0):
+    parts = []
+    first_user = ""
+    seen = 0  # user text messages seen BEFORE the current record
+    try:
+        for o in _records(path):
+            role = o.get("type")
+            msg = o.get("message") or {}
+            if role == "user":
+                txt = content_text(msg.get("content", ""))
+                user_text = is_user_text(o)
+                if user_text and not first_user:
+                    first_user = txt
+                if seen >= from_user and txt:
+                    parts.append("USER: " + txt)
+                if user_text:
+                    seen += 1
+            elif role == "assistant" and (from_user == 0 or seen > from_user):
+                txt = content_text(msg.get("content", ""))
+                if txt:
+                    parts.append("ASSISTANT: " + txt)
     except OSError:
         pass
-    text = redact("\n\n".join(parts))
-    if len(text) > maxchars:
-        text = text[:maxchars] + "\n\n[...transcript truncated for length...]"
-    return text
+    text = "\n\n".join(parts)
+    if from_user > 0:
+        text = ("CONTEXT: this session was resumed; its first %d user messages were "
+                "already reviewed. First user message: %s\n\n" % (from_user, first_user[:1000])) + text
+    # redact the WHOLE text before clipping so a secret straddling the cut cannot survive
+    return _clip(redact(text), maxchars)
 
 
 def last_user(path):
@@ -207,7 +283,15 @@ def main(argv):
         sys.stdout.write(flatten(argv[3], int(argv[4])))
         return 0
     if action == "flatten-file":
-        sys.stdout.write(flatten(argv[2], int(argv[3])))
+        frm = int(argv[4]) if len(argv) > 4 else 0
+        sys.stdout.write(flatten(argv[2], int(argv[3]), frm))
+        return 0
+    if action == "classify":
+        v, n = classify(argv[2], int(argv[3]))
+        sys.stdout.write("%s\t%d\n" % (v, n))
+        return 0
+    if action == "count-user":
+        sys.stdout.write("%d\n" % count_user(argv[2]))
         return 0
     sys.stderr.write("unknown action: %s\n" % action)
     return 2
