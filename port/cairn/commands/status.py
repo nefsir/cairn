@@ -149,6 +149,10 @@ def cmd_status(ctx: Context, args: list[str]) -> int:
     settings = cfg.claude_dir / "settings.json"
     on = settings.is_file() and _grep_cairn_review(settings)
     info("SessionEnd hook:   on" if on else "SessionEnd hook:   off (enable: cairn install --enable-hooks)")
+    src = cfg.state / ".cairn-source"
+    if src.is_file():
+        kv = dict(l.partition("=")[::2] for l in src.read_text(encoding="utf-8").splitlines() if "=" in l)
+        info(f"Installed from:   {kv.get('id', '?')[:12]}  ({kv.get('installed', '?')})")
     print(SEP_EQ)
     info("tip: 'cairn curate' for merge/fold/lifecycle detail; 'cairn provenance --list' for the catalog.")
     return 0

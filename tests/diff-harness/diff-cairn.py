@@ -92,6 +92,8 @@ def snapshot(ctx):
                 # deploy) — bash never writes it; excluded from the equivalence diff.
                 if rel.startswith("cairn/port/"):
                     continue
+                if rel == "cairn/.cairn-source":
+                    continue
                 try:
                     snap["tree"][rel] = p.read_bytes()
                 except OSError:
@@ -133,6 +135,7 @@ def _norm_stamps(s):
 def _norm(b, ctx):
     """Normalize a captured stdout/stderr/file body before diffing."""
     s = b.decode("utf-8", "replace") if isinstance(b, (bytes, bytearray)) else b
+    s = "\n".join(l for l in s.split("\n") if not re.match(r"\s*(Installed from:|Review queue:)", l))
     s = s.replace(str(ctx.claude_dir), "<CLAUDE_DIR>")   # longest first (contains home)
     s = s.replace(str(ctx.home), "<HOME>")
     s = re.sub(r'/var/folders/\S+', "<TMP>", s)

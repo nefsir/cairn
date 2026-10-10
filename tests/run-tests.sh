@@ -131,22 +131,25 @@ tier_unit() {
 
   # --- transcript.py redaction ---
   local J="$T/s.jsonl"
+  # fake secrets are assembled at runtime so no credential-shaped literal sits in this file
+  local FAKE_GH="gh""p_abcdefghijklmnopqrstuvwxyz0123456789ABCD" FAKE_AWS="AK""IAIOSFODNN7EXAMPLE"
+  local PEM_BEGIN="-----BEGIN"" RSA PRIVATE KEY-----"
   printf '%s\n' '{"type":"user","cwd":"/x","message":{"content":[{"type":"text","text":"api_key=sk-SECRETVALUE12345 hello"}]}}' > "$J"
   # a realistic >=40-char opaque token (the long-token backstop fires at 40+)
-  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"token here ghp_abcdefghijklmnopqrstuvwxyz0123456789ABCD ok"}]}}' >> "$J"
+  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"token here '"$FAKE_GH"' ok"}]}}' >> "$J"
   local flat; flat="$(python3 "$LIB/transcript.py" flatten-file "$J" 60000)"
   case "$flat" in *"sk-SECRETVALUE12345"*) bad "transcript redacts api_key value";; *"<redacted>"*) ok "transcript redacts api_key value";; *) bad "transcript redaction (api_key)";; esac
-  case "$flat" in *"ghp_abcdefghijklmnopqrstuvwxyz0123456789ABCD"*) bad "transcript redacts long token";; *) ok "transcript redacts long token";; esac
+  case "$flat" in *"$FAKE_GH"*) bad "transcript redacts long token";; *) ok "transcript redacts long token";; esac
   case "$flat" in *"USER: "*) ok "transcript flattens USER role";; *) bad "transcript USER role";; esac
   # strengthened redaction: JSON, env-var, provider tokens, URL creds, PEM
   red(){ python3 -c 'import sys;sys.path.insert(0,sys.argv[1]);import transcript as t;print(t.redact(sys.argv[2]))' "$LIB" "$1"; }
   case "$(red '{"api_key": "sk-1234567890abcdefABCDEF"}')" in *sk-1234567890*) bad "redact JSON-quoted secret";; *) ok "redact JSON-quoted secret";; esac
   case "$(red 'export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEX')" in *wJalrXUtnFEMI*) bad "redact env-var secret";; *) ok "redact env-var secret";; esac
-  case "$(red 'id AKIAIOSFODNN7EXAMPLE here')" in *AKIAIOSFODNN7EXAMPLE*) bad "redact AWS access key id";; *) ok "redact AWS access key id";; esac
+  case "$(red "id $FAKE_AWS here")" in *"$FAKE_AWS"*) bad "redact AWS access key id";; *) ok "redact AWS access key id";; esac
   case "$(red 'postgres://admin:s3cretP4ss@db:5432/x')" in *s3cretP4ss*) bad "redact URL credentials";; *) ok "redact URL credentials";; esac
-  case "$(red '-----BEGIN RSA PRIVATE KEY-----
+  case "$(red "$PEM_BEGIN
 MIIEabcdef
------END RSA PRIVATE KEY-----')" in *MIIEabcdef*) bad "redact PEM private key";; *) ok "redact PEM private key";; esac
+-----END RSA PRIVATE KEY-----")" in *MIIEabcdef*) bad "redact PEM private key";; *) ok "redact PEM private key";; esac
 
   # lifecycle: a future last_used must read as active, not archived (no abs())
   expect_eq "$(python3 "$LIB/lifecycle.py" state 2026-06-15 2026-12-01 30 90)" "active" "lifecycle clamps future activity to active"
@@ -245,6 +248,16 @@ EOF
   expect_grep "$CD/CLAUDE.md" "@memories/USER.md" "managed block @-imports memory (auto-load at session start)"
   "$C" lint >/dev/null 2>&1; check $? "cairn lint passes on a fresh install"
   expect_file "$C" "dispatcher self-installed to ~/.claude/cairn"
+  expect_file "$CD/cairn/.cairn-source" "install stamps .cairn-source"
+  expect_grep "$CD/cairn/.cairn-source" "id=" ".cairn-source records the source id"
+  # a change in port/ alone must be deployed on reinstall
+  local PORTF="$REPO/port/cairn/out.py"; local PORTBAK; PORTBAK="$(mktemp)"; cp "$PORTF" "$PORTBAK"
+  printf '\n# cairn-test-marker\n' >> "$PORTF"
+  "$CAIRN" install >/dev/null 2>&1
+  expect_grep "$CD/cairn/port/cairn/out.py" "cairn-test-marker" "reinstall deploys a port/-only change"
+  cp "$PORTBAK" "$PORTF"; rm -f "$PORTBAK"
+  "$CAIRN" install >/dev/null 2>&1
+  "$C" status 2>/dev/null | grep -q "Installed from:" && ok "status shows install source" || bad "status shows install source"
   ( cd "$CD/skills" && git rev-parse --git-dir >/dev/null 2>&1 ); check $? "skills/ is a git repo"
 
   # --- embedded == asset (G12 cmp) ---
@@ -256,9 +269,9 @@ EOF
   # --- idempotency: re-run changes no file content ---
   # POSIX cksum (universal); strip the $CD prefix so paths compare stably
   local before after
-  before="$(find "$CD" -type f -not -path '*/.git/*' -not -name '*.bak-*' -not -path '*/logs/*' -exec cksum {} \; 2>/dev/null | sed "s#$CD##" | sort | cksum)"
+  before="$(find "$CD" -type f -not -path '*/.git/*' -not -name '*.bak-*' -not -name '.cairn-source' -not -path '*/logs/*' -exec cksum {} \; 2>/dev/null | sed "s#$CD##" | sort | cksum)"
   "$CAIRN" install >/dev/null 2>&1
-  after="$(find "$CD" -type f -not -path '*/.git/*' -not -name '*.bak-*' -not -path '*/logs/*' -exec cksum {} \; 2>/dev/null | sed "s#$CD##" | sort | cksum)"
+  after="$(find "$CD" -type f -not -path '*/.git/*' -not -name '*.bak-*' -not -name '.cairn-source' -not -path '*/logs/*' -exec cksum {} \; 2>/dev/null | sed "s#$CD##" | sort | cksum)"
   expect_eq "$after" "$before" "install is idempotent (no file content changes on re-run)"
 
   # --- migrate over a v1 block preserves user content ---

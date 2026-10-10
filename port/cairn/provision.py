@@ -8,16 +8,18 @@ from __future__ import annotations
 
 import filecmp
 import glob
+import hashlib
 import json
 import os
 import platform
 import shutil
+import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
 from .claude import score_one_skill
-from .clock import today, ts
+from .clock import stamp, today, ts
 from .config import BEGIN_MARK, END_MARK, OLD_BEGIN, OLD_END, Config
 from .context import Context
 from .gitutil import _git, skills_commit, skills_is_repo
@@ -100,15 +102,49 @@ def relocate_state(cfg: Config, dry: bool) -> None:
         ok("moved skill-archive -> cairn/skill-archive")
 
 
+_DEPLOY_SUBDIRS = ("bin", "lib", "assets", "tests", "port")
+
+
+def source_id(cairn_home: Path) -> str:
+    """Identity of the code being installed: git HEAD (+dirty) or a content hash."""
+    try:
+        head = subprocess.run(["git", "-C", str(cairn_home), "rev-parse", "HEAD"],
+                              capture_output=True, text=True)
+        if head.returncode == 0:
+            dirty = subprocess.run(
+                ["git", "-C", str(cairn_home), "status", "--porcelain", "--", *_DEPLOY_SUBDIRS],
+                capture_output=True, text=True).stdout.strip()
+            return head.stdout.strip() + ("+dirty" if dirty else "")
+    except OSError:
+        pass
+    h = hashlib.sha256()
+    for sub in _DEPLOY_SUBDIRS:
+        base = cairn_home / sub
+        for p in sorted(base.rglob("*")) if base.is_dir() else []:
+            if p.is_file() and "__pycache__" not in p.parts:
+                h.update(p.relative_to(cairn_home).as_posix().encode())
+                h.update(p.read_bytes())
+    return "tree:" + h.hexdigest()[:16]
+
+
+def _read_stamp(cfg: Config) -> dict[str, str]:
+    f = cfg.state / ".cairn-source"
+    out: dict[str, str] = {}
+    if f.is_file():
+        for line in f.read_text(encoding="utf-8").splitlines():
+            k, _, v = line.partition("=")
+            out[k] = v
+    return out
+
+
 def self_install(cfg: Config, dry: bool) -> None:
     if cfg.cairn_home == cfg.state:
         return
     if dry:
         info(f"would copy bin/ lib/ assets/ into {cfg.state}")
         return
-    if (_cmp(cfg.cairn_home / "bin" / "cairn", cfg.state / "bin" / "cairn")
-            and _cmp(cfg.cairn_home / "lib" / "meta.py", cfg.state / "lib" / "meta.py")
-            and _cmp(cfg.cairn_home / "assets" / "claude-block.md", cfg.state / "assets" / "claude-block.md")):
+    sid = source_id(cfg.cairn_home)
+    if not sid.endswith("+dirty") and _read_stamp(cfg).get("id") == sid:
         ok(f"cairn in {cfg.state} (unchanged)")
         return
     cfg.state.mkdir(parents=True, exist_ok=True)
@@ -127,6 +163,8 @@ def self_install(cfg: Config, dry: bool) -> None:
         os.chmod(cfg.state / "bin" / "cairn", 0o755)
     except OSError:
         pass
+    (cfg.state / ".cairn-source").write_text(
+        f"source={cfg.cairn_home}\nid={sid}\ninstalled={stamp()}\n", encoding="utf-8")
     ok(f"installed cairn into {cfg.state}")
 
 
