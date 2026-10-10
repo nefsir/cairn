@@ -252,6 +252,40 @@ assert any("reclaiming stale lock" in m for m in msgs), msgs
 print("LOCK-OK")
 PY
   [ $? -eq 0 ] && ok "lockutil: exclusive, released, stale reclaimed" || bad "lockutil"
+
+  # --- reviewqueue ---
+  PYTHONPATH="$REPO/port" python3 - "$T/q" <<'PY'
+import sys
+from datetime import datetime
+from pathlib import Path
+from cairn.reviewqueue import Queue, safe_sid
+q = Queue(Path(sys.argv[1])); q.ensure()
+assert safe_sid("abc-123_X") == "abc-123_X"
+assert safe_sid("../etc") is None and safe_sid("a/b") is None and safe_sid("") is None
+p = q.put("pending", "s1", {"enqueued_at": 100}); q.put("pending", "s0", {"enqueued_at": 50})
+assert q.find("s1") == ("pending", p)
+assert q.next_pending().name == "s0.json"
+r = q.move(p, "running", {"started_at": 1000})
+assert q.find("s1")[0] == "running" and q.read(r)["enqueued_at"] == 100
+assert q.recover_orphans(1000 + 899, 900) == 0
+assert q.recover_orphans(1000 + 901, 900) == 1 and q.find("s1")[0] == "pending"
+now = int(datetime(2023, 11, 14, 12, 0).timestamp())  # local noon: +2000s stays on the same local day
+assert q.may_start(now, "after-session", 600, 25)[0]
+q.note_start(now)
+ok, why = q.may_start(now + 10, "after-session", 600, 25); assert not ok and "gap" in why
+assert q.may_start(now + 10, "drain", 600, 25)[0]
+assert q.may_start(now + 601, "after-session", 600, 25)[0]
+for _ in range(24): q.note_start(now + 700)
+ok, why = q.may_start(now + 2000, "drain", 600, 25); assert not ok and "cap" in why
+assert q.may_start(now + 2000, "manual", 600, 25)[0]
+f = q.put("failed", "s2", {"attempts": 1}); q.put("failed", "s3", {"attempts": 2})
+assert q.retry_failed() == 1 and q.find("s2")[0] == "pending" and q.find("s3")[0] == "failed"
+q.put("done", "old", {"finished_at": now - 31 * 86400}); q.put("done", "new", {"finished_at": now})
+assert q.rotate(now, 30) >= 1 and q.find("old") is None and q.find("new")
+c = q.counts(now); assert c["done_7d"] == 1 and c["failed"] == 1 and c["last_done"] == now, c
+print("QUEUE-OK")
+PY
+  [ $? -eq 0 ] && ok "reviewqueue: states, orphans, gap/cap, retry, rotation, sid safety" || bad "reviewqueue"
   rm -rf "$T"
 }
 
