@@ -540,6 +540,8 @@ EOF
   # kill switch
   mkrt "$RT/d1.jsonl" cli 3; hookjson d1 "$RT/d1.jsonl" | CAIRN_DISABLE=1 "$C" review --enqueue
   expect_nofile "$Q/pending/d1.json" "CAIRN_DISABLE=1 makes the hook a no-op"
+  "$C" status 2>/dev/null | grep -E "Review queue: +pending [0-9]+ · running [0-9]+ · failed [0-9]+ · done\(7d\) [0-9]+ · skipped\(7d\) [0-9]+" >/dev/null \
+    && ok "status shows review queue counters" || bad "status shows review queue counters"
 
   # --- curate: read-only then --apply-lifecycle with protections ---
   local S="$CD/skills"

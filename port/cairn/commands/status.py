@@ -153,6 +153,17 @@ def cmd_status(ctx: Context, args: list[str]) -> int:
     if src.is_file():
         kv = dict(l.partition("=")[::2] for l in src.read_text(encoding="utf-8").splitlines() if "=" in l)
         info(f"Installed from:   {kv.get('id', '?')[:12]}  ({kv.get('installed', '?')})")
+    qroot = cfg.state / "queue"
+    if qroot.is_dir():
+        from ..clock import epoch
+        from .review import _queue
+        c = _queue(cfg).counts(epoch())
+        last = "never"
+        if c["last_done"]:
+            from datetime import datetime
+            last = datetime.fromtimestamp(c["last_done"]).strftime("%Y-%m-%d %H:%M")
+        info(f"Review queue:      pending {c['pending']} · running {c['running']} · failed {c['failed']}"
+             f" · done(7d) {c['done_7d']} · skipped(7d) {c['skipped_7d']} · last done {last}")
     print(SEP_EQ)
     info("tip: 'cairn curate' for merge/fold/lifecycle detail; 'cairn provenance --list' for the catalog.")
     return 0
