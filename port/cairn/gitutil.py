@@ -7,6 +7,7 @@ commit object (tree + author + subject) matches the bash oracle byte-for-byte.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 from .config import Config
 from .helpers import has_git
@@ -103,6 +104,19 @@ def commit_paths(cfg: Config, paths: list[str], message: str) -> None:
     ident = [] if _git(cfg, "config", "user.email").stdout.strip() else \
         ["-c", "user.name=cairn", "-c", "user.email=cairn@localhost"]
     _git(cfg, *ident, "commit", "-q", "-m", message, "--", *paths)
+
+
+def backup_paths(cfg: Config, paths: list[str], dest: Path) -> None:
+    """Copy the current bytes of each existing path to dest/<rel>, so a revert never destroys
+    edits a parallel live session made to the same files."""
+    for rel in paths:
+        src = cfg.skills / rel
+        if src.is_file():
+            try:
+                (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+                (dest / rel).write_bytes(src.read_bytes())
+            except OSError:
+                pass
 
 
 def revert_paths(cfg: Config, snap: dict[str, bytes | None], paths: list[str]) -> None:

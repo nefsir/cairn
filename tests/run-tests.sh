@@ -511,6 +511,7 @@ EOF
   kill -0 "$(cat "$CD/sleep.pid")" 2>/dev/null && bad "timeout kills the whole process group" || ok "timeout kills the whole process group"
   CAIRN_REVIEW_TIMEOUT_SEC=2 CAIRN_NOW=1700002900 "$C" review --worker --drain
   expect_grep "$Q/failed/h1.json" '"attempts": 2' "drain retries a failed entry exactly once"
+  expect_grep "$(ls -d "$Q"/reverted/*-h1/tele/learnings.md 2>/dev/null | head -1)" "half" "failed review backs up the reverted edits under queue/reverted"
   # resume during a review: transcript grows by >=3 user msgs while claude runs -> requeued, not done
   cat > "$SHIM/claude" <<EOF
 #!/usr/bin/env bash
@@ -537,6 +538,33 @@ EOF
   hookjson m1 "$RT/m1.jsonl" | "$C" review --enqueue
   local w=0; while [ ! -f "$Q/done/m1.json" ] && [ "$w" -lt 20 ]; do sleep 0.5; w=$((w+1)); done
   expect_file "$Q/done/m1.json" "detached worker processes the entry after the hook returns"
+  # real spawn runs the worker and claude in the state dir, not the (possibly deleted) session cwd
+  cat > "$SHIM/claude" <<EOF
+#!/usr/bin/env bash
+cat >/dev/null; pwd -P > "$WORK/claude-cwd.txt"; echo done
+EOF
+  chmod +x "$SHIM/claude"
+  rm -f "$Q/.last-review" "$WORK/claude-cwd.txt"; mkrt "$RT/c1.jsonl" cli 3
+  mkdir -p "$WORK/gone-cwd"
+  ( cd "$WORK/gone-cwd" && hookjson c1 "$RT/c1.jsonl" | "$C" review --enqueue; rmdir "$WORK/gone-cwd" )
+  w=0; while [ ! -f "$Q/done/c1.json" ] && [ "$w" -lt 20 ]; do sleep 0.5; w=$((w+1)); done
+  expect_file "$Q/done/c1.json" "detached worker survives its session cwd being removed"
+  expect_eq "$(cat "$WORK/claude-cwd.txt" 2>/dev/null)" "$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$CD/cairn")" "claude -p runs in the cairn state dir"
+  # lock heartbeat: a drain longer than the stale threshold must keep refreshing the lock
+  cat > "$SHIM/claude" <<EOF
+#!/usr/bin/env bash
+cat >/dev/null
+python3 -c 'import os,sys,time;print(int(time.time()-os.path.getmtime(sys.argv[1])))' "$CD/cairn/.review.lock" >> "$WORK/lock-ages.txt"
+touch -t 202001010000 "$CD/cairn/.review.lock"; echo done
+EOF
+  chmod +x "$SHIM/claude"
+  rm -f "$WORK/lock-ages.txt"
+  mkrt "$RT/l1.jsonl" cli 3; mkrt "$RT/l2.jsonl" cli 3
+  hookjson l1 "$RT/l1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  hookjson l2 "$RT/l2.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  CAIRN_NOW=1700020000 "$C" review --worker --drain
+  expect_eq "$(grep -c . "$WORK/lock-ages.txt")" "2" "lock heartbeat drain ran both entries"
+  python3 -c 'import sys;a=[int(x) for x in open(sys.argv[1])];sys.exit(0 if a and max(a)<60 else 1)' "$WORK/lock-ages.txt"; check $? "worker refreshes the review lock before each entry"
   # kill switch
   mkrt "$RT/d1.jsonl" cli 3; hookjson d1 "$RT/d1.jsonl" | CAIRN_DISABLE=1 "$C" review --enqueue
   expect_nofile "$Q/pending/d1.json" "CAIRN_DISABLE=1 makes the hook a no-op"

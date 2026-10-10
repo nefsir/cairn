@@ -20,10 +20,10 @@ from pathlib import Path
 from ..clock import epoch, today
 from ..config import Config, _int_env
 from ..context import Context
-from ..gitutil import (_git, changed_since, commit_paths, revert_paths, skill_names,
+from ..gitutil import (_git, backup_paths, changed_since, commit_paths, revert_paths, skill_names,
                        skills_is_repo, snapshot_dirty)
 from ..helpers import need_claude, need_python
-from ..lockutil import mkdir_lock
+from ..lockutil import mkdir_lock, touch
 from ..out import hdr, info, ok, say, warn
 from ..reviewqueue import Queue, safe_sid
 
@@ -99,7 +99,8 @@ def _queue(cfg: Config) -> Queue:
 def _spawn_worker(cfg: Config, lf) -> None:
     argv = [sys.executable, str(cfg.cairn_home / "bin" / "cairn"), "review", "--worker", "--after-session"]
     kw: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL, "close_fds": True}
+                "stderr": subprocess.DEVNULL, "close_fds": True,
+          "cwd": str(cfg.state)}  # the ended session's cwd may be gone and carries its own CLAUDE.md/hooks
     if os.name == "posix":
         kw["start_new_session"] = True
     else:
@@ -182,7 +183,7 @@ def _kill_group(p: subprocess.Popen) -> None:
         p.kill()
 
 
-def _run_claude(prompt: str, model: str, flat: str, lf, timeout_s: int) -> tuple[int, str]:
+def _run_claude(prompt: str, model: str, flat: str, lf, timeout_s: int, cwd: str) -> tuple[int, str]:
     env = os.environ.copy()
     env["CAIRN_REVIEW_HOOK"] = "1"
     kw: dict = {"start_new_session": True} if os.name == "posix" else {}
@@ -190,7 +191,7 @@ def _run_claude(prompt: str, model: str, flat: str, lf, timeout_s: int) -> tuple
         p = subprocess.Popen(
             ["claude", "-p", prompt, "--model", model, "--max-turns", "30",
              "--permission-mode", "acceptEdits", "--allowedTools", _ALLOWED],
-            stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, env=env, **kw)
+            stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=cwd, **kw)
         try:
             p.communicate(flat.encode("utf-8"), timeout=timeout_s)
             return p.returncode, "" if p.returncode == 0 else f"claude exited {p.returncode}"
@@ -214,13 +215,15 @@ def _review_one(ctx: Context, transcript: str, model: str, from_user: int, lf) -
     say(lf, f"review: {transcript} (model {model}, from user msg {from_user})")
     repo = skills_is_repo(cfg)
     snap = snapshot_dirty(cfg) if repo else {}
-    rc, why = _run_claude(prompt, model, flat, lf, _timeout_s())
+    rc, why = _run_claude(prompt, model, flat, lf, _timeout_s(), str(cfg.state))
     if not repo:
         return {"outcome": "done" if rc == 0 else "failed", "why": why, "rc": rc, "changed_skills": []}
     changed = changed_since(cfg, snap)
     if rc != 0:
+        bak = cfg.state / "queue" / "reverted" / f"{epoch()}-{Path(transcript).stem}"
+        backup_paths(cfg, changed, bak)
         revert_paths(cfg, snap, changed)
-        say(lf, f"review: {why}; reverted {len(changed)} path(s)")
+        say(lf, f"review: {why}; reverted {len(changed)} path(s); backup in {bak}")
         return {"outcome": "failed", "why": why, "rc": rc, "changed_skills": []}
     names = [s for s in skill_names(changed)
              if s != "skill-extraction" and (cfg.skills / s / "SKILL.md").is_file()]
@@ -274,6 +277,7 @@ def _worker(ctx: Context, mode: str, model: str, lf) -> int:
             if not allowed:
                 say(lf, f"review-worker: deferring {p.stem} ({why})")
                 break
+            touch(cfg.state / ".review.lock")
             q.note_start(epoch())
             r = q.move(p, "running", {"started_at": epoch()})
             res = _review_one(ctx, tp, model, int(e.get("from_user_msg", 0)), lf)

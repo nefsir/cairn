@@ -36,6 +36,14 @@ def _acquire(lock: Path, stale_after_s: int, log: Callable[[str], None], busy_ms
     return False
 
 
+def touch(lock: Path) -> None:
+    """Heartbeat: refresh the lock's mtime so a long-running holder is not reclaimed as stale."""
+    try:
+        os.utime(lock)
+    except OSError:
+        pass
+
+
 @contextmanager
 def mkdir_lock(lock: Path, stale_after_s: int, log: Callable[[str], None],
                busy_msg: str) -> Iterator[bool]:
