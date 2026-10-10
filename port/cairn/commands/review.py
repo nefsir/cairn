@@ -278,8 +278,15 @@ def _worker(ctx: Context, mode: str, model: str, lf) -> int:
             r = q.move(p, "running", {"started_at": epoch()})
             res = _review_one(ctx, tp, model, int(e.get("from_user_msg", 0)), lf)
             attempts = int(e.get("attempts", 0)) + (1 if res["outcome"] == "failed" else 0)
-            q.move(r, res["outcome"], {**res, "attempts": attempts, "finished_at": epoch(),
-                                       "user_msgs_reviewed": n_msgs})
+            upd = {**res, "attempts": attempts, "finished_at": epoch(), "user_msgs_reviewed": n_msgs}
+            state = res["outcome"]
+            if state == "done":
+                # a resume enqueued while we were running was dropped: catch up here, under the lock
+                now_n = int(ctx.lib.run("transcript", "count-user", tp).value() or 0)
+                if now_n >= n_msgs + _int_env("CAIRN_REVIEW_RESUME_MIN_NEW", 3):
+                    state, upd = "pending", {"from_user_msg": n_msgs, "attempts": 0, "enqueued_at": epoch()}
+                    say(lf, f"review-worker: {r.stem} grew to {now_n} user msgs during review; requeued")
+            q.move(r, state, upd)
             if mode == "after-session":
                 break
         if mode == "drain":

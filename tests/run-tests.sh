@@ -475,7 +475,7 @@ EOF
   # timeout: a hanging claude (with a child) is killed, edits reverted, retried once by drain
   cat > "$SHIM/claude" <<EOF
 #!/usr/bin/env bash
-cat >/dev/null; printf 'half\n' >> "$CD/skills/tele/learnings.md"; sleep 30 & echo $! > "$CD/sleep.pid"; wait
+cat >/dev/null; printf 'half\n' >> "$CD/skills/tele/learnings.md"; sleep 30 & echo \$! > "$CD/sleep.pid"; wait
 EOF
   chmod +x "$SHIM/claude"
   local before_l; before_l="$(cat "$CD/skills/tele/learnings.md")"
@@ -486,6 +486,17 @@ EOF
   kill -0 "$(cat "$CD/sleep.pid")" 2>/dev/null && bad "timeout kills the whole process group" || ok "timeout kills the whole process group"
   CAIRN_REVIEW_TIMEOUT_SEC=2 CAIRN_NOW=1700002900 "$C" review --worker --drain
   expect_grep "$Q/failed/h1.json" '"attempts": 2' "drain retries a failed entry exactly once"
+  # resume during a review: transcript grows by >=3 user msgs while claude runs -> requeued, not done
+  cat > "$SHIM/claude" <<EOF
+#!/usr/bin/env bash
+cat >/dev/null; for i in 1 2 3; do printf '{"type":"user","entrypoint":"cli","message":{"content":"late %s"}}\n' "\$i" >> "$RT/r1.jsonl"; done; echo done
+EOF
+  chmod +x "$SHIM/claude"
+  mkrt "$RT/r1.jsonl" cli 3; hookjson r1 "$RT/r1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  CAIRN_NOW=1700003700 "$C" review --worker --after-session
+  expect_file "$Q/pending/r1.json" "resume during a review requeues the entry instead of done"
+  expect_grep "$Q/pending/r1.json" '"from_user_msg": 3' "requeued from the user_msgs counted before the review"
+  rm -f "$Q/pending/r1.json" "$Q/done/r1.json"
   # mutex: a held lock makes the worker exit at once
   mkdir -p "$CD/cairn/.review.lock"; mkrt "$RT/m1.jsonl" cli 3; hookjson m1 "$RT/m1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
   CAIRN_NOW=1700003600 "$C" review --worker --drain
