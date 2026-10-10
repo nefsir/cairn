@@ -286,6 +286,31 @@ c = q.counts(now); assert c["done_7d"] == 1 and c["failed"] == 1 and c["last_don
 print("QUEUE-OK")
 PY
   [ $? -eq 0 ] && ok "reviewqueue: states, orphans, gap/cap, retry, rotation, sid safety" || bad "reviewqueue"
+  # --- gitutil scoped commit / revert ---
+  local GS="$T/gs"; mkdir -p "$GS/skills/a" "$GS/skills/b"
+  ( cd "$GS/skills" && git init -q && printf 'A\n' > a/SKILL.md && printf 'B\n' > b/SKILL.md \
+      && git add -A && git -c user.name=t -c user.email=t@t commit -qm init )
+  printf 'user-edit\n' >> "$GS/skills/b/SKILL.md"          # pre-existing dirty edit
+  CLAUDE_DIR="$GS" PYTHONPATH="$REPO/port" python3 - "$REPO" <<'PY'
+import sys, subprocess
+from pathlib import Path
+from cairn.config import load_config
+from cairn import gitutil as g
+cfg = load_config(Path(sys.argv[1]))
+snap = g.snapshot_dirty(cfg); assert set(snap) == {"b/SKILL.md"}, snap
+(cfg.skills / "a" / "SKILL.md").write_text("A2\n"); (cfg.skills / "a" / "learnings.md").write_text("L\n")
+ch = g.changed_since(cfg, snap); assert ch == ["a/SKILL.md", "a/learnings.md"], ch
+assert g.skill_names(ch) == ["a"]
+g.revert_paths(cfg, snap, ch)
+assert (cfg.skills / "a" / "SKILL.md").read_text() == "A\n" and not (cfg.skills / "a" / "learnings.md").exists()
+assert (cfg.skills / "b" / "SKILL.md").read_text() == "B\nuser-edit\n"
+(cfg.skills / "a" / "learnings.md").write_text("L\n")
+g.commit_paths(cfg, g.changed_since(cfg, snap), "review of x")
+st = subprocess.run(["git", "-C", str(cfg.skills), "status", "--porcelain"], capture_output=True, text=True).stdout
+assert st.strip() == "M b/SKILL.md", st
+print("GIT-OK")
+PY
+  [ $? -eq 0 ] && ok "gitutil: scoped commit + revert leave user edits alone" || bad "gitutil scoped commit/revert"
   rm -rf "$T"
 }
 
