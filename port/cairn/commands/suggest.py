@@ -72,6 +72,8 @@ def _tick_prompt(ctx: Context) -> str | None:
 
 
 def cmd_suggest(ctx: Context, args: list[str]) -> int:
+    if "--hook" in args and (os.environ.get("CAIRN_DISABLE") or os.environ.get("CAIRN_REVIEW_HOOK")):
+        return 0
     need_python()
     cfg = ctx.cfg
     if not cfg.skills.is_dir():

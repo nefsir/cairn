@@ -1,3 +1,5 @@
+DIVERGED = "review pipeline v2 (queue + detached worker); covered by tests/run-tests.sh"
+
 NAME = "install-hooks-idempotent"
 
 # Golden master for `cairn install --enable-hooks` and its idempotency, closing the

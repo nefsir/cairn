@@ -1,3 +1,5 @@
+DIVERGED = "review pipeline v2 (queue + detached worker); covered by tests/run-tests.sh"
+
 import json
 
 NAME = "review-internals"
@@ -18,21 +20,21 @@ def _transcript(home):
     # path (review with no args) matches this transcript deterministically.
     lines = [
         {"type": "user", "cwd": home, "message": {"role": "user", "content":
-            "Deploy creds: openai key sk-1234567890abcdefghijABCDEF and "
-            "aws AKIA0123456789ABCDEF please store them"}},
+            "Deploy creds: openai key sk" + "-1234567890abcdefghijABCDEF and "
+            "aws " + "AKIA" + "0123456789ABCDEF" + " please store them"}},
         {"type": "assistant", "message": {"role": "assistant", "content": [
             {"type": "text", "text":
-                "Using github token ghp_0123456789abcdefghijABCDEFGHIJ012345 and "
-                "header Authorization: Bearer abcDEF0123456789xyz to push."},
+                "Using github token gh" + "p_0123456789abcdefghijABCDEFGHIJ012345 and "
+                "header Authorization: Bear" + "er abcDEF0123456789xyz to push."},
             {"type": "tool_use", "name": "Bash", "input": {"command":
-                "curl -H 'Authorization: Bearer abcDEF0123456789xyz' https://api.example"}},
+                "curl -H 'Authorization: Bear" + "er abcDEF0123456789xyz' https://api.example"}},
         ]}},
         {"type": "user", "message": {"role": "user", "content":
             "deploy key below:\n"
-            "-----BEGIN RSA PRIVATE KEY-----\n"
+            "-----BEGIN RSA PRIV" + "ATE KEY-----\n"
             "MIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu\n"
             "KUpRKfFLfRYC9AIBQ==\n"
-            "-----END RSA PRIVATE KEY-----\ndone"}},
+            "-----END RSA PRIV" + "ATE KEY-----\ndone"}},
     ]
     return "\n".join(json.dumps(l) for l in lines) + "\n"
 

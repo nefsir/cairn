@@ -58,6 +58,9 @@ def cmd_maintain(ctx: Context, args: list[str]) -> int:
             return 0
         say(lf, "maintain: start")
         if shutil.which("claude"):
+            if _sub(binp, lf, "review", "--worker", "--drain") != 0:
+                say(lf, "review drain ended with errors (continuing)")
+        if shutil.which("claude"):
             if _sub(binp, lf, "improve") != 0:
                 say(lf, "improve ended with errors (continuing)")
         else:

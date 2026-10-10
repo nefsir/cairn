@@ -28,7 +28,7 @@ def enable_hooks_transform(data: object, cairn_bin: str, logf: str) -> tuple[boo
         arr.append(grp)
 
     upsert("SessionEnd", "review",
-           '[ -n "${CAIRN_REVIEW_HOOK:-}" ] && exit 0; "%s" review --hook >> "%s" 2>&1' % (cairn_bin, logf))
+           '[ -n "${CAIRN_REVIEW_HOOK:-}" ] && exit 0; "%s" review --enqueue >> "%s" 2>&1' % (cairn_bin, logf))
     upsert("UserPromptSubmit", "suggest", '"%s" suggest --hook 2>/dev/null || true' % cairn_bin)
     upsert("PostToolUse", "track", '"%s" track --hook 2>/dev/null || true' % cairn_bin, matcher="Skill")
 

@@ -239,6 +239,9 @@ def load_scenarios(names):
 
 
 def run_scenario(name, mod, oracle, candidate):
+    if getattr(mod, "DIVERGED", ""):
+        print(f"  ~ {name} diverged by design: {mod.DIVERGED}")
+        return []
     tmp = Path(tempfile.mkdtemp(prefix="diffcairn-"))
     try:
         oc = Ctx(oracle, tmp / "oracle" / "home")

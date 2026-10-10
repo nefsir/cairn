@@ -42,6 +42,8 @@ def _skill_from_tool_input(skills: str, raw: str) -> str | None:
 
 
 def cmd_track(ctx: Context, args: list[str]) -> int:
+    if os.environ.get("CAIRN_DISABLE") or os.environ.get("CAIRN_REVIEW_HOOK"):
+        return 0
     need_python()
     cfg = ctx.cfg
     if not cfg.skills.is_dir():

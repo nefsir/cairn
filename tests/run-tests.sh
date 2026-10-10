@@ -595,6 +595,16 @@ MEOF
   mkdir -p "$CD/skills/redis-timeout-x"; printf -- '---\nname: redis-timeout-x\ndescription: diagnose redis command timeout lettuce pool exhaustion\n---\nb\n' > "$CD/skills/redis-timeout-x/SKILL.md"
   printf '{"prompt":"redis command timeout lettuce pool"}' | CAIRN_SUGGEST_THRESHOLD=1 "$C" suggest --hook 2>/dev/null | grep -q 'redis-timeout-x' && ok "suggest --hook surfaces a matching skill" || bad "suggest --hook match"
   printf '{"prompt":"thanks looks good"}' | "$C" suggest --hook 2>/dev/null | grep -q . && bad "suggest --hook should be silent on chatter" || ok "suggest --hook silent on chatter"
+  expect_grep "$CD/settings.json" 'review --enqueue' "SessionEnd hook calls review --enqueue"
+  expect_nogrep "$CD/settings.json" 'review --hook' "old review --hook command was repointed"
+  mkdir -p "$CD/skills/gx"; printf -- '---\nname: gx\ndescription: d\n---\nb\n' > "$CD/skills/gx/SKILL.md"
+  python3 "$LIB/meta.py" init "$CD/skills/gx/.meta" created=2026-01-01
+  printf '{"tool_name":"Skill","tool_input":{"skill":"gx"}}' | CAIRN_REVIEW_HOOK=1 "$C" track --hook
+  expect_eq "$(python3 "$LIB/meta.py" get "$CD/skills/gx/.meta" use_count)" "0" "track ignores Skill calls made inside a review run"
+  printf '{"tool_name":"Skill","tool_input":{"skill":"gx"}}' | CAIRN_DISABLE=1 "$C" track --hook
+  expect_eq "$(python3 "$LIB/meta.py" get "$CD/skills/gx/.meta" use_count)" "0" "CAIRN_DISABLE silences track"
+  printf '{"prompt":"redis command timeout lettuce pool"}' | CAIRN_DISABLE=1 CAIRN_SUGGEST_THRESHOLD=1 "$C" suggest --hook 2>/dev/null | grep -q . && bad "CAIRN_DISABLE silences suggest" || ok "CAIRN_DISABLE silences suggest"
+  printf '{"prompt":"redis command timeout lettuce pool"}' | CAIRN_REVIEW_HOOK=1 CAIRN_SUGGEST_THRESHOLD=1 "$C" suggest --hook 2>/dev/null | grep -q . && bad "suggest silent inside a review run" || ok "suggest silent inside a review run"
   # names-only safety net: no strong match but a topically-warm prompt -> roster of
   # skill names (near-misses first) so a token-overlap false negative stays visible.
   mkdir -p "$CD/skills/mongo-slow-x"; printf -- '---\nname: mongo-slow-x\ndescription: mongodb compound index slow query audit\n---\nb\n' > "$CD/skills/mongo-slow-x/SKILL.md"

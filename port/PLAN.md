@@ -17,6 +17,8 @@
 > existing bash install with `./bin/cairn install --enable-hooks` (enable_hooks upserts →
 > hooks repointed in place; skills/memory/foreign-hooks preserved). Windows still needs the
 > CI runner to validate (can't test on macOS).
+>
+> **2026-10: bash frozen.** `bin/cairn.bash` stays the equivalence oracle only for commands unchanged since the flip. The review pipeline (queue, detached worker, `--enqueue` hook) is Python-only; scenarios touching it carry `DIVERGED` and are covered by `tests/run-tests.sh`.
 
 
 **Goal:** replace the bash `bin/cairn` with a single cross-platform Python `cairn`
