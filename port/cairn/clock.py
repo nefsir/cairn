@@ -40,3 +40,8 @@ def stamp() -> str:
 def stamp_hm() -> str:
     """``date '+%Y-%m-%d %H:%M'`` — minute-precision header (status / curate / mine)."""
     return _now().strftime("%Y-%m-%d %H:%M")
+
+
+def epoch() -> int:
+    """Seconds since the epoch, honouring CAIRN_NOW (queue gap/cap/rotation math)."""
+    return int(_now().timestamp())

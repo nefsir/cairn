@@ -202,6 +202,25 @@ MIIEabcdef
   case "$(printf 'PRZYCISKÓW layout' | CAIRN_SUGGEST_THRESHOLD=1 python3 "$LIB/suggest.py" "$SG" 3 macos | head -1)" in figma-x*) ok "suggest folds diacritics + prefix-matches inflection";; *) bad "suggest folding/prefix";; esac
   case "$(printf 'tune epoll kernel scheduler' | CAIRN_SUGGEST_THRESHOLD=1 python3 "$LIB/suggest.py" "$SG" 3 linux | head -1)" in linonly*) ok "suggest fires a linux skill on linux";; *) bad "suggest linux match";; esac
   sgm="$(printf 'tune epoll kernel scheduler' | CAIRN_SUGGEST_THRESHOLD=1 python3 "$LIB/suggest.py" "$SG" 3 macos)"; [ -z "$sgm" ] && ok "suggest platform-gates a linux-only skill on macos" || bad "suggest platform gating (got: $sgm)"
+
+  # --- lockutil ---
+  local LK="$T/lk"
+  PYTHONPATH="$REPO/port" python3 - "$LK" <<'PY'
+import sys, os, time
+from pathlib import Path
+from cairn.lockutil import mkdir_lock
+lk = Path(sys.argv[1]); msgs = []
+with mkdir_lock(lk, 60, msgs.append, "busy") as a:
+    with mkdir_lock(lk, 60, msgs.append, "busy") as b:
+        assert a and not b, (a, b)
+assert not lk.exists()
+os.mkdir(lk); old = time.time() - 120; os.utime(lk, (old, old))
+with mkdir_lock(lk, 60, msgs.append, "busy") as c:
+    assert c
+assert any("reclaiming stale lock" in m for m in msgs), msgs
+print("LOCK-OK")
+PY
+  [ $? -eq 0 ] && ok "lockutil: exclusive, released, stale reclaimed" || bad "lockutil"
   rm -rf "$T"
 }
 

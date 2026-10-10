@@ -10,10 +10,10 @@ import os
 import re
 import shutil
 import subprocess
-import time
 from pathlib import Path
 
 from ..context import Context
+from ..lockutil import mkdir_lock
 from ..out import die, info, ok, say
 from ..schedutil import sched_disable, sched_enable, sched_status
 
@@ -52,29 +52,10 @@ def cmd_maintain(ctx: Context, args: list[str]) -> int:
     os.environ["PATH"] = f"{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + os.environ.get("PATH", "")
     lock = cfg.state / ".maintain.lock"
     cfg.state.mkdir(parents=True, exist_ok=True)
-    try:
-        os.mkdir(lock)
-    except FileExistsError:
-        try:
-            lmt = int(os.path.getmtime(lock))
-        except OSError:
-            lmt = 0
-        lage = int(time.time()) - lmt
-        if lmt > 0 and lage > 21600:
-            say(lf, f"reclaiming stale lock ({lage}s old)")
-            try:
-                os.rmdir(lock)
-            except OSError:
-                pass
-            try:
-                os.mkdir(lock)
-            except OSError:
-                say(lf, "SKIP: could not reclaim lock")
-                return 0
-        else:
-            say(lf, f"SKIP: another maintain run holds {lock}")
+    with mkdir_lock(lock, 21600, lambda m: say(lf, m),
+                    f"SKIP: another maintain run holds {lock}") as held:
+        if not held:
             return 0
-    try:
         say(lf, "maintain: start")
         if shutil.which("claude"):
             if _sub(binp, lf, "improve") != 0:
@@ -85,9 +66,4 @@ def cmd_maintain(ctx: Context, args: list[str]) -> int:
             say(lf, "curate ended with errors")
         say(lf, "maintain: done")
         ok(f"maintenance complete (log: {lf})")
-    finally:
-        try:
-            os.rmdir(lock)
-        except OSError:
-            pass
     return 0
