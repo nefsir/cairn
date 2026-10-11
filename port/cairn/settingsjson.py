@@ -8,8 +8,15 @@ from __future__ import annotations
 import json
 
 
-def enable_hooks_transform(data: object, cairn_bin: str, logf: str) -> tuple[bool, dict]:
-    """Upsert cairn's three hooks; return (changed, data). Lifted from bash enable_hooks."""
+MOD_DIRS_ENV = "CLAUDE_CODE_PLUGIN_DIRS"
+_MOD_MARK = "/cairn/assets/mods/"
+
+
+def enable_hooks_transform(data: object, cairn_bin: str, logf: str,
+                           mod_dir: str | None = None) -> tuple[bool, dict]:
+    """Upsert cairn's three hooks; return (changed, data). Lifted from bash enable_hooks.
+    ``mod_dir`` (Python-only) is also appended to env.CLAUDE_CODE_PLUGIN_DIRS so Claude
+    Code loads the cairn-status mod in every session."""
     if not isinstance(data, dict):
         data = {}
     before = json.dumps(data, sort_keys=True)
@@ -31,6 +38,12 @@ def enable_hooks_transform(data: object, cairn_bin: str, logf: str) -> tuple[boo
            '[ -n "${CAIRN_REVIEW_HOOK:-}" ] && exit 0; "%s" review --enqueue >> "%s" 2>&1' % (cairn_bin, logf))
     upsert("UserPromptSubmit", "suggest", '"%s" suggest --hook 2>/dev/null || true' % cairn_bin)
     upsert("PostToolUse", "track", '"%s" track --hook 2>/dev/null || true' % cairn_bin, matcher="Skill")
+
+    if mod_dir:
+        env = data.setdefault("env", {})
+        dirs = [d for d in str(env.get(MOD_DIRS_ENV, "")).split(":") if d]
+        if mod_dir not in dirs:
+            env[MOD_DIRS_ENV] = ":".join(dirs + [mod_dir])
 
     changed = json.dumps(data, sort_keys=True) != before
     return changed, data
@@ -59,6 +72,16 @@ def remove_cairn_hooks(data: dict) -> dict:
                 del data["hooks"][event]
         if "hooks" in data and not data["hooks"]:
             del data["hooks"]
+
+    env = data.get("env")
+    if isinstance(env, dict) and MOD_DIRS_ENV in env:
+        dirs = [d for d in str(env[MOD_DIRS_ENV]).split(":") if d and _MOD_MARK not in d]
+        if dirs:
+            env[MOD_DIRS_ENV] = ":".join(dirs)
+        else:
+            del env[MOD_DIRS_ENV]
+        if not env:
+            del data["env"]
     return data
 
 

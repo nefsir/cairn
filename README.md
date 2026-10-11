@@ -160,6 +160,9 @@ proposals, generalize and score them 1-5. Review, then scaffold the good ones.
   existing umbrella -> else add a support file -> else create a new class-level
   skill; update `usage.md`, append honest `learnings.md`, write preferences/facts
   to memory. Runs via the `SessionEnd` hook (opt-in) or as a soft rule in `CLAUDE.md`.
+  With hooks on, the `cairn-status` mod (`assets/mods/cairn-status`, loaded through
+  `CLAUDE_CODE_PLUGIN_DIRS`) shows the review queue under the prompt and toasts a
+  failed review or one that changed skills; `cairn uninstall` removes it.
 - **curate** — consolidate overlapping skills into umbrellas; move unused skills
   through a lifecycle (active -> stale -> archived; archive is recoverable, never
   deleted); flag low-usefulness ones.
@@ -201,6 +204,7 @@ review loop): `/skill-new`, `/skill-improve`, `/skill-merge`, `/skill-fold`,
   cairn/
     bin/cairn               the dispatcher (Python entry)
     port/cairn/             the Python package (self-contained deploy)
+    assets/mods/cairn-status/  Claude Code mod: review queue in the status line
     harvest/ skill-archive/ logs/
   commands/                 slash commands
 ```

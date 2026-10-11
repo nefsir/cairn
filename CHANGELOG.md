@@ -7,6 +7,11 @@ Format loosely follows Keep a Changelog; dates are ISO-8601.
 The 2.0 rewrite. One `cairn` dispatcher, every artifact a plain file in git.
 
 ### Added
+- **`cairn-status` mod** (`assets/mods/cairn-status`) — a Claude Code hooks
+  module that pins the review queue (`pending · running · ⚠ failed`) under the
+  prompt and toasts a failed review or one that changed skills, remembering what
+  it announced across sessions. `--enable-hooks` adds it to
+  `env.CLAUDE_CODE_PLUGIN_DIRS`; `cairn uninstall` removes only that entry.
 - **`cairn` dispatcher** (`bin/cairn`) — one entry point replacing the v1
   `skill-*.sh` sprawl: `mine | distill | refine | review | curate | improve |
   status | memory | pin | unpin | provenance | install | migrate | uninstall |

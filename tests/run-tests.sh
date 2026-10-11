@@ -253,6 +253,25 @@ print("LOCK-OK")
 PY
   [ $? -eq 0 ] && ok "lockutil: exclusive, released, stale reclaimed" || bad "lockutil"
 
+  # --- settingsjson: cairn-status mod dir in env.CLAUDE_CODE_PLUGIN_DIRS ---
+  PYTHONPATH="$REPO/port" python3 - <<'PY2'
+from cairn.settingsjson import enable_hooks_transform, remove_cairn_hooks
+MOD = "/h/.claude/cairn/assets/mods/cairn-status"
+ch, d = enable_hooks_transform({}, "/b/cairn", "/l", MOD)
+assert ch and d["env"]["CLAUDE_CODE_PLUGIN_DIRS"] == MOD, d.get("env")
+ch, d = enable_hooks_transform(d, "/b/cairn", "/l", MOD)
+assert not ch and d["env"]["CLAUDE_CODE_PLUGIN_DIRS"] == MOD, "re-run must not duplicate"
+_, d = enable_hooks_transform({"env": {"CLAUDE_CODE_PLUGIN_DIRS": "/x/mine", "FOO": "1"}}, "/b/cairn", "/l", MOD)
+assert d["env"]["CLAUDE_CODE_PLUGIN_DIRS"] == "/x/mine:" + MOD, d["env"]
+d = remove_cairn_hooks(d)
+assert d["env"] == {"CLAUDE_CODE_PLUGIN_DIRS": "/x/mine", "FOO": "1"}, d["env"]
+_, d = enable_hooks_transform({}, "/b/cairn", "/l", MOD)
+d = remove_cairn_hooks(d)
+assert "env" not in d, d
+print("MODDIR-OK")
+PY2
+  [ $? -eq 0 ] && ok "settingsjson: mod dir added once, appended to foreign dirs, removed on uninstall" || bad "settingsjson mod dir"
+
   # --- reviewqueue ---
   PYTHONPATH="$REPO/port" python3 - "$T/q" <<'PY'
 import sys
@@ -646,6 +665,8 @@ MEOF
   expect_grep "$CD/settings.json" 'suggest --hook' "suggest hook wired to cairn suggest"
   # cairn must NOT touch skillListingBudgetFraction (0 is an undocumented value CC rejects)
   expect_nogrep "$CD/settings.json" 'skillListingBudgetFraction' "enable-hooks leaves skillListingBudgetFraction untouched"
+  expect_grep "$CD/settings.json" 'cairn/assets/mods/cairn-status' "enable-hooks loads the cairn-status mod via CLAUDE_CODE_PLUGIN_DIRS"
+  expect_file "$CD/cairn/assets/mods/cairn-status/hooks/register.ts" "install deploys the cairn-status mod"
   # suggest --hook surfaces a matching skill and stays silent on chatter
   mkdir -p "$CD/skills/redis-timeout-x"; printf -- '---\nname: redis-timeout-x\ndescription: diagnose redis command timeout lettuce pool exhaustion\n---\nb\n' > "$CD/skills/redis-timeout-x/SKILL.md"
   printf '{"prompt":"redis command timeout lettuce pool"}' | CAIRN_SUGGEST_THRESHOLD=1 "$C" suggest --hook 2>/dev/null | grep -q 'redis-timeout-x' && ok "suggest --hook surfaces a matching skill" || bad "suggest --hook match"
@@ -694,6 +715,7 @@ MEOF
     python3 -c "import json,sys;d=json.load(open('$CD/settings.json'));sys.exit(0 if 'hooks' not in d else 1)" 2>/dev/null; check $? "uninstall removes the SessionEnd hook"
     expect_nogrep "$CD/settings.json" 'suggest' "uninstall removes the UserPromptSubmit suggest hook"
     expect_nogrep "$CD/settings.json" 'track' "uninstall removes the PostToolUse track hook"
+    expect_nogrep "$CD/settings.json" 'CLAUDE_CODE_PLUGIN_DIRS' "uninstall removes the cairn-status mod dir"
   fi
 
   # backfill resilience / run_claude 3-way contract: deterministic fail (rc2) is

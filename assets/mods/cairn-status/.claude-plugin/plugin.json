@@ -1,0 +1,1 @@
+{ "name": "cairn-status", "version": "0.1.0", "description": "Shows the cairn review queue in the status line and toasts failed reviews and reviews that changed skills" }

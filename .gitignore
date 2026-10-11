@@ -14,3 +14,7 @@ cairn.zip
 # Local-only working material — never part of the published tool. One generic
 # entry so no individual private filename is ever exposed in this file.
 project/
+
+# written by Claude Code when it loads a mod (types + tsconfig extending them)
+assets/mods/*/.claude-plugin/types/
+assets/mods/*/tsconfig.json

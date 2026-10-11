@@ -352,14 +352,15 @@ def enable_hooks(cfg: Config, dry: bool, ts_s: str) -> None:
             data = json.loads(settings.read_text(encoding="utf-8", errors="replace"))
         except Exception:
             data = {}
-    changed, data = enable_hooks_transform(data, cairn_bin, logf)
+    mod_dir = str(cfg.state / "assets" / "mods" / "cairn-status")
+    changed, data = enable_hooks_transform(data, cairn_bin, logf, mod_dir)
     if changed:
         if settings.is_file():
             _backup(settings, ts_s)
         tmp = settings.with_name(settings.name + f".cairn-tmp.{os.getpid()}")
         tmp.write_text(dumps(data), encoding="utf-8")
         os.replace(tmp, settings)
-        ok("hooks installed: SessionEnd review (capture) + UserPromptSubmit suggest (surface at task start) + PostToolUse track (real use_count). Disable: cairn uninstall.")
+        ok("hooks installed: SessionEnd review (capture) + UserPromptSubmit suggest (surface at task start) + PostToolUse track (real use_count) + cairn-status mod (review queue in the status line). Disable: cairn uninstall.")
     else:
         ok("cairn hooks already present (no change)")
 

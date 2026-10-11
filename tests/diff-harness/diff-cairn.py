@@ -141,6 +141,10 @@ def _norm(b, ctx):
     s = s.replace('" review --enqueue >> ', '" review --hook >> ')
     s = s.replace(str(ctx.claude_dir), "<CLAUDE_DIR>")   # longest first (contains home)
     s = s.replace(str(ctx.home), "<HOME>")
+    # cairn-status mod (Python-only): enable_hooks also adds the mod dir to
+    # env.CLAUDE_CODE_PLUGIN_DIRS and names it in its summary. Strip ONLY those exact fragments.
+    s = s.replace(',\n  "env": {\n    "CLAUDE_CODE_PLUGIN_DIRS": "<CLAUDE_DIR>/cairn/assets/mods/cairn-status"\n  }', '')
+    s = s.replace(" + cairn-status mod (review queue in the status line). Disable:", ". Disable:")
     s = re.sub(r'/var/folders/\S+', "<TMP>", s)
     s = re.sub(r'/private/tmp/\S+', "<TMP>", s)
     s = re.sub(r'/tmp/\S+', "<TMP>", s)
