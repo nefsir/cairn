@@ -153,6 +153,12 @@ def cmd_status(ctx: Context, args: list[str]) -> int:
     if src.is_file():
         kv = dict(l.partition("=")[::2] for l in src.read_text(encoding="utf-8").splitlines() if "=" in l)
         info(f"Installed from:   {kv.get('id', '?')[:12]}  ({kv.get('installed', '?')})")
+        from ..schedutil import sched_status
+        st = sched_status(cfg)
+        if st == "off":
+            info("Nightly maintain:  off (enable: cairn schedule 03:30)")
+        else:
+            info(f"Nightly maintain:  {st} · last run {_last_maintain(cfg.logs / 'maintain.log')}")
     qroot = cfg.state / "queue"
     if qroot.is_dir():
         from ..clock import epoch
@@ -167,6 +173,18 @@ def cmd_status(ctx: Context, args: list[str]) -> int:
     print(SEP_EQ)
     info("tip: 'cairn curate' for merge/fold/lifecycle detail; 'cairn provenance --list' for the catalog.")
     return 0
+
+
+def _last_maintain(log) -> str:
+    # timestamp of the last "maintain: start" line, so a schedule that stopped firing shows its age
+    try:
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return "never"
+    for l in reversed(lines):
+        if l[19:] == " maintain: start":
+            return l[:16]
+    return "never"
 
 
 def _grep_cairn_review(path) -> bool:

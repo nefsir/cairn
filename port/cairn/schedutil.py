@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import platform
 import subprocess
+import sys
 from pathlib import Path
 
 from .config import Config
@@ -41,7 +42,7 @@ _PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
   <key>Label</key><string>{label}</string>
   <key>ProgramArguments</key>
-  <array><string>/bin/bash</string><string>{bin}</string><string>maintain</string></array>
+  <array><string>{python}</string><string>{bin}</string><string>maintain</string></array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>{h}</integer><key>Minute</key><integer>{m}</integer></dict>
   <key>StandardOutPath</key><string>{logs}/maintain.launchd.log</string>
@@ -88,7 +89,7 @@ def sched_enable(cfg: Config, t: str) -> None:
     if platform.system() == "Darwin":
         plist = sched_plist()
         plist.parent.mkdir(parents=True, exist_ok=True)
-        plist.write_text(_PLIST.format(label=SCHED_LABEL, bin=binp, h=h, m=m, logs=cfg.logs), encoding="utf-8")
+        plist.write_text(_PLIST.format(label=SCHED_LABEL, python=sys.executable, bin=binp, h=h, m=m, logs=cfg.logs), encoding="utf-8")
         if _has("launchctl"):
             uid = os.getuid()
             subprocess.run(["launchctl", "bootout", f"gui/{uid}/{SCHED_LABEL}"],

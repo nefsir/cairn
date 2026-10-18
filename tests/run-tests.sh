@@ -386,6 +386,7 @@ EOF
   cp "$PORTBAK" "$PORTF"; rm -f "$PORTBAK"
   "$CAIRN" install >/dev/null 2>&1
   "$C" status 2>/dev/null | grep -q "Installed from:" && ok "status shows install source" || bad "status shows install source"
+  "$C" status 2>/dev/null | grep -q "Nightly maintain:  off (enable: cairn schedule" && ok "status shows nightly maintain off" || bad "status shows nightly maintain off"
   ( cd "$CD/skills" && git rev-parse --git-dir >/dev/null 2>&1 ); check $? "skills/ is a git repo"
 
   # --- embedded == asset (G12 cmp) ---
