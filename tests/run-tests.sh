@@ -532,6 +532,24 @@ EOF
   CAIRN_REVIEW_TIMEOUT_SEC=2 CAIRN_NOW=1700002900 "$C" review --worker --drain
   expect_grep "$Q/failed/h1.json" '"attempts": 2' "drain retries a failed entry exactly once"
   expect_grep "$(ls -d "$Q"/reverted/*-h1/tele/learnings.md 2>/dev/null | head -1)" "half" "failed review backs up the reverted edits under queue/reverted"
+  # transient API error (Mac slept mid-response): requeued, retried up to 3 attempts, then failed
+  cat > "$SHIM/claude" <<EOF
+#!/usr/bin/env bash
+cat >/dev/null; echo x >> "$CD/transient-calls"
+[ "\$(grep -c . "$CD/transient-calls")" -le "\${TRANSIENT_FAILS:-99}" ] || { echo done; exit 0; }
+echo "API Error: Your computer went to sleep mid-response."; exit 1
+EOF
+  chmod +x "$SHIM/claude"
+  : > "$CD/transient-calls"
+  mkrt "$RT/t1.jsonl" cli 3; hookjson t1 "$RT/t1.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  CAIRN_NOW=1700003000 "$C" review --worker --drain
+  expect_grep "$Q/failed/t1.json" '"attempts": 3' "persistent transient error ends in failed/ after 3 attempts"
+  expect_grep "$Q/failed/t1.json" 'transient: API Error' "transient cause recorded in why"
+  expect_eq "$(grep -c . "$CD/transient-calls")" "3" "transient error retried, not looped forever"
+  rm -f "$Q/failed/t1.json"; : > "$CD/transient-calls"
+  mkrt "$RT/t2.jsonl" cli 3; hookjson t2 "$RT/t2.jsonl" | CAIRN_REVIEW_NO_SPAWN=1 "$C" review --enqueue
+  TRANSIENT_FAILS=1 CAIRN_NOW=1700003010 "$C" review --worker --drain
+  expect_file "$Q/done/t2.json" "one transient error then success ends in done/, not failed/"
   # resume during a review: transcript grows by >=3 user msgs while claude runs -> requeued, not done
   cat > "$SHIM/claude" <<EOF
 #!/usr/bin/env bash

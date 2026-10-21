@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -26,6 +28,11 @@ from ..helpers import need_claude, need_python
 from ..lockutil import mkdir_lock, touch
 from ..out import hdr, info, ok, say, warn
 from ..reviewqueue import Queue, safe_sid
+
+# claude -p errors that say nothing about the review itself (Mac slept, network blip,
+# API overload): the entry goes back to pending instead of failed.
+_TRANSIENT = re.compile(r"API Error|went to sleep|Connection error|ECONNRESET|ETIMEDOUT|"
+                        r"overloaded|rate.?limit|socket hang up", re.I)
 
 _ALLOWED = ("Read,Edit,Write,Glob,Grep,Bash(cairn memory:*),Bash(cairn provenance:*),"
             "Bash(cairn pin:*),Bash(cairn unpin:*)")
@@ -187,17 +194,27 @@ def _run_claude(prompt: str, model: str, flat: str, lf, timeout_s: int, cwd: str
     env = os.environ.copy()
     env["CAIRN_REVIEW_HOOK"] = "1"
     kw: dict = {"start_new_session": True} if os.name == "posix" else {}
+    argv = ["claude", "-p", prompt, "--model", model, "--max-turns", "30",
+            "--permission-mode", "acceptEdits", "--allowedTools", _ALLOWED]
+    # keep a Mac from idle-sleeping mid-review (the API call dies when it does)
+    if sys.platform == "darwin" and shutil.which("caffeinate"):
+        argv = ["caffeinate", "-i", *argv]
     with open(lf, "ab") as log:
-        p = subprocess.Popen(
-            ["claude", "-p", prompt, "--model", model, "--max-turns", "30",
-             "--permission-mode", "acceptEdits", "--allowedTools", _ALLOWED],
-            stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=cwd, **kw)
+        start = log.tell()
+        p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
+                             env=env, cwd=cwd, **kw)
         try:
             p.communicate(flat.encode("utf-8"), timeout=timeout_s)
-            return p.returncode, "" if p.returncode == 0 else f"claude exited {p.returncode}"
         except subprocess.TimeoutExpired:
             _kill_group(p)
             return 124, f"timeout after {timeout_s}s"
+    if p.returncode == 0:
+        return 0, ""
+    with open(lf, "rb") as log:
+        log.seek(start)
+        tail = log.read()[-4000:].decode("utf-8", "replace")
+    m = _TRANSIENT.search(tail)
+    return p.returncode, f"claude exited {p.returncode}" + (f" (transient: {m.group(0)})" if m else "")
 
 
 def _head(cfg: Config) -> str:
@@ -284,6 +301,10 @@ def _worker(ctx: Context, mode: str, model: str, lf) -> int:
             attempts = int(e.get("attempts", 0)) + (1 if res["outcome"] == "failed" else 0)
             upd = {**res, "attempts": attempts, "finished_at": epoch(), "user_msgs_reviewed": n_msgs}
             state = res["outcome"]
+            if state == "failed" and "(transient:" in res["why"] \
+                    and attempts < _int_env("CAIRN_REVIEW_TRANSIENT_ATTEMPTS", 3):
+                state = "pending"
+                say(lf, f"review-worker: {r.stem} hit a transient error (attempt {attempts}); requeued")
             if state == "done":
                 # a resume enqueued while we were running was dropped: catch up here, under the lock
                 now_n = int(ctx.lib.run("transcript", "count-user", tp).value() or 0)
